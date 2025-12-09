@@ -30,7 +30,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/net v0.47.0
 	golang.org/x/oauth2 v0.33.0
-	golang.org/x/sync v0.18.0
+	golang.org/x/sync v0.19.0
 )
 
 require (
