@@ -166,6 +166,12 @@ func Destination(opts *config.KanikoOptions, cacheKey string) (string, error) {
 		}
 		return fmt.Sprintf("%s/cache:%s", destRef.Context(), cacheKey), nil
 	}
+	// check if the cache repo is a valid repository
+	// if not, we assume it's a registry
+	_, err := name.NewRepository(cache, name.WeakValidation)
+	if err != nil {
+		return fmt.Sprintf("%s/kaniko-cache:%s", cache, cacheKey), nil
+	}
 	return fmt.Sprintf("%s:%s", cache, cacheKey), nil
 }
 
