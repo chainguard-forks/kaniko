@@ -59,7 +59,7 @@ FROM debian:bookworm-slim@sha256:d5d3f9c23164ea16f31852f95bd5959aad1c5e854332fe0
 RUN apt update && apt install -y ca-certificates
 
 # use musl busybox since it's staticly compiled on all platforms
-FROM busybox:musl@sha256:b259afe60d4b88dbdb31908ca9524ef5308afd01aea17f4ce44ddb3c6a882929 AS busybox
+FROM busybox:musl@sha256:e3fe564d0188da6781abe4b7ebc13fc9c7f3e6963cca7ed08a32b4ff23e2b2ea AS busybox
 
 FROM scratch AS kaniko-base-slim
 
