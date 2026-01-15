@@ -38,7 +38,7 @@ require (
 	github.com/containerd/containerd v1.7.30
 )
 
-require github.com/googleapis/enterprise-certificate-proxy v0.3.7 // indirect
+require github.com/googleapis/enterprise-certificate-proxy v0.3.9 // indirect
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
@@ -119,7 +119,7 @@ require (
 	golang.org/x/sys v0.40.0
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	google.golang.org/api v0.259.0
+	google.golang.org/api v0.260.0
 	google.golang.org/genproto v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
