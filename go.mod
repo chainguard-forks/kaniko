@@ -3,12 +3,12 @@ module github.com/chainguard-dev/kaniko
 go 1.24.3
 
 require (
-	cloud.google.com/go/storage v1.59.1
+	cloud.google.com/go/storage v1.59.2
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.4
 	github.com/aws/aws-sdk-go-v2 v1.41.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.7
-	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.21.0
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.95.1
+	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.21.1
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.96.0
 	github.com/awslabs/amazon-ecr-credential-helper/ecr-login v0.11.0
 	github.com/chrismellard/docker-credential-acr-env v0.0.0-20230304212654-82a0ddb27589
 	github.com/docker/docker v28.5.2+incompatible
