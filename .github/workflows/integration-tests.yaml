@@ -21,6 +21,7 @@ jobs:
       IMAGE_REPO: 'localhost:5000'
       REGISTRY: 'localhost:5000'
       DOCKER_BUILDKIT: '0'
+      DOCKER_API_VERSION: '1.44'
 
     strategy:
       fail-fast: false
