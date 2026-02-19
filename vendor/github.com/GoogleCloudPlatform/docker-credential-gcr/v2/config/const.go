@@ -155,6 +155,9 @@ var DefaultARRegistries = [...]string{
 	"us-west4-docker.pkg.dev",
 	"docker.us-west4.rep.pkg.dev",
 	"us-west8-docker.pkg.dev",
+	"docker.us-west8.rep.pkg.dev",
+	"europe-north2-docker.pkg.dev",
+	"asia-southeast3-docker.pkg.dev",
 }
 
 // SupportedGCRTokenSources maps config keys to plain english explanations for
