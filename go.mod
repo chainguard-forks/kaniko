@@ -38,7 +38,7 @@ require (
 	github.com/containerd/containerd v1.7.30
 )
 
-require github.com/googleapis/enterprise-certificate-proxy v0.3.11 // indirect
+require github.com/googleapis/enterprise-certificate-proxy v0.3.12 // indirect
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
@@ -119,16 +119,16 @@ require (
 	golang.org/x/sys v0.41.0
 	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	google.golang.org/api v0.268.0
+	google.golang.org/api v0.269.0
 	google.golang.org/genproto v0.0.0-20260128011058-8636f8732409 // indirect
-	google.golang.org/grpc v1.78.0 // indirect
+	google.golang.org/grpc v1.79.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
 
 require (
-	cel.dev/expr v0.24.0 // indirect
-	cloud.google.com/go/auth v0.18.1 // indirect
+	cel.dev/expr v0.25.1 // indirect
+	cloud.google.com/go/auth v0.18.2 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/monitoring v1.24.3 // indirect
 	dario.cat/mergo v1.0.2 // indirect
@@ -143,7 +143,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ecrpublic v1.38.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.6 // indirect
 	github.com/cloudflare/circl v1.6.1 // indirect
-	github.com/cncf/xds/go v0.0.0-20251022180443-0feb69152e9f // indirect
+	github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 // indirect
 	github.com/containerd/cgroups/v3 v3.1.0 // indirect
 	github.com/containerd/containerd/api v1.10.0 // indirect
 	github.com/containerd/containerd/v2 v2.2.0 // indirect
@@ -155,8 +155,8 @@ require (
 	github.com/containerd/typeurl/v2 v2.2.3 // indirect
 	github.com/cyphar/filepath-securejoin v0.5.1 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/envoyproxy/go-control-plane/envoy v1.35.0 // indirect
-	github.com/envoyproxy/protoc-gen-validate v1.2.1 // indirect
+	github.com/envoyproxy/go-control-plane/envoy v1.36.0 // indirect
+	github.com/envoyproxy/protoc-gen-validate v1.3.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
@@ -190,7 +190,7 @@ require (
 	github.com/tonistiigi/go-csvvalue v0.0.0-20240814133006-030d3b2625d0 // indirect
 	github.com/toqueteos/webbrowser v1.2.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/contrib/detectors/gcp v1.38.0 // indirect
+	go.opentelemetry.io/contrib/detectors/gcp v1.39.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.63.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 // indirect
 	go.opentelemetry.io/otel v1.39.0 // indirect
@@ -202,7 +202,7 @@ require (
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/exp v0.0.0-20250911091902-df9299821621 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260203192932-546029d2fa20 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260203192932-546029d2fa20 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260217215200-42d3e9bedb6d // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
