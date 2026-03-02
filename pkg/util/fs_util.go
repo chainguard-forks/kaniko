@@ -315,7 +315,12 @@ func ExtractFile(dest string, hdr *tar.Header, cleanedName string, tr io.Reader)
 		return fmt.Errorf("tar entry %q is not allowed: references parent directory", hdr.Name)
 	}
 
-	path, err := securejoin.SecureJoin(dest, cleanedName)
+	// Resolve only the parent directory with SecureJoin, not the full path.
+	// Appending the basename lexically avoids following the final component
+	// when it is an existing symlink that the current tar entry intends to
+	// overwrite — resolving it would write to the symlink's target instead,
+	// creating self-referential symlink loops (e.g. dash -> dash).
+	secureDir, err := securejoin.SecureJoin(dest, filepath.Dir(cleanedName))
 	if err != nil {
 		// During layer extraction, symlink chains may be incomplete,
 		// causing ELOOP. Fall back to the lexical path — the OS will
@@ -323,8 +328,9 @@ func ExtractFile(dest string, hdr *tar.Header, cleanedName string, tr io.Reader)
 		if !errors.Is(err, syscall.ELOOP) {
 			return fmt.Errorf("resolving path for %q: %w", hdr.Name, err)
 		}
-		path = filepath.Join(dest, cleanedName)
+		secureDir = filepath.Join(dest, filepath.Dir(cleanedName))
 	}
+	path := filepath.Join(secureDir, filepath.Base(cleanedName))
 	base := filepath.Base(path)
 	dir := filepath.Dir(path)
 	mode := hdr.FileInfo().Mode()

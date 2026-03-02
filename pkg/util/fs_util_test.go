@@ -974,6 +974,115 @@ func TestExtractFile_PathTraversal(t *testing.T) {
 	})
 }
 
+func TestExtractFile_SymlinkOverwrite(t *testing.T) {
+	// Regression test: when a tar layer overwrites an existing symlink
+	// (e.g. usr/bin/sh -> dash), SecureJoin must not follow the existing
+	// symlink and write to the target. Otherwise dash becomes a
+	// self-referential symlink (dash -> dash) and /bin/sh is broken.
+
+	defaultTestTime, err := time.Parse(time.RFC3339, "1912-06-23T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("overwrite symlink in same directory", func(t *testing.T) {
+		dest := t.TempDir()
+
+		// Step 1: extract usr/bin/dash as a regular file.
+		dashHdr := fileHeader("usr/bin/dash", "dash-binary", 0o755, defaultTestTime)
+		if err := ExtractFile(dest, dashHdr, filepath.Clean(dashHdr.Name), bytes.NewReader([]byte("dash-binary"))); err != nil {
+			t.Fatal(err)
+		}
+
+		// Step 2: extract usr/bin/sh -> dash (symlink).
+		shHdr := linkHeader("usr/bin/sh", "dash")
+		if err := ExtractFile(dest, shHdr, filepath.Clean(shHdr.Name), bytes.NewReader(nil)); err != nil {
+			t.Fatal(err)
+		}
+
+		// Step 3: overwrite usr/bin/sh -> dash again (simulates a later layer).
+		shHdr2 := linkHeader("usr/bin/sh", "dash")
+		if err := ExtractFile(dest, shHdr2, filepath.Clean(shHdr2.Name), bytes.NewReader(nil)); err != nil {
+			t.Fatal(err)
+		}
+
+		// Verify: sh must still point to dash.
+		target, err := os.Readlink(filepath.Join(dest, "usr/bin/sh"))
+		if err != nil {
+			t.Fatalf("reading symlink usr/bin/sh: %v", err)
+		}
+		if target != "dash" {
+			t.Fatalf("usr/bin/sh -> %q, want %q", target, "dash")
+		}
+
+		// Verify: dash must still be a regular file (not corrupted into a symlink).
+		fi, err := os.Lstat(filepath.Join(dest, "usr/bin/dash"))
+		if err != nil {
+			t.Fatalf("stat usr/bin/dash: %v", err)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			loopTarget, _ := os.Readlink(filepath.Join(dest, "usr/bin/dash"))
+			t.Fatalf("usr/bin/dash is a symlink (-> %s), expected regular file", loopTarget)
+		}
+		got, err := os.ReadFile(filepath.Join(dest, "usr/bin/dash"))
+		if err != nil {
+			t.Fatalf("reading usr/bin/dash: %v", err)
+		}
+		if string(got) != "dash-binary" {
+			t.Fatalf("usr/bin/dash contents = %q, want %q", got, "dash-binary")
+		}
+	})
+
+	t.Run("overwrite symlink with directory indirection", func(t *testing.T) {
+		// Reproduces the bin/sh scenario where bin is a symlink to usr/bin.
+		dest := t.TempDir()
+
+		// Step 1: extract usr/bin/dash as a regular file.
+		dashHdr := fileHeader("usr/bin/dash", "dash-binary", 0o755, defaultTestTime)
+		if err := ExtractFile(dest, dashHdr, filepath.Clean(dashHdr.Name), bytes.NewReader([]byte("dash-binary"))); err != nil {
+			t.Fatal(err)
+		}
+
+		// Step 2: create bin -> usr/bin symlink.
+		binHdr := linkHeader("bin", "usr/bin")
+		if err := ExtractFile(dest, binHdr, filepath.Clean(binHdr.Name), bytes.NewReader(nil)); err != nil {
+			t.Fatal(err)
+		}
+
+		// Step 3: extract bin/sh -> dash (through the bin symlink).
+		shHdr := linkHeader("bin/sh", "dash")
+		if err := ExtractFile(dest, shHdr, filepath.Clean(shHdr.Name), bytes.NewReader(nil)); err != nil {
+			t.Fatal(err)
+		}
+
+		// Step 4: overwrite bin/sh -> dash again (simulates a later layer).
+		shHdr2 := linkHeader("bin/sh", "dash")
+		if err := ExtractFile(dest, shHdr2, filepath.Clean(shHdr2.Name), bytes.NewReader(nil)); err != nil {
+			t.Fatal(err)
+		}
+
+		// bin/sh resolves through the bin -> usr/bin symlink, so the
+		// actual file is at usr/bin/sh. It must point to dash.
+		target, err := os.Readlink(filepath.Join(dest, "usr/bin/sh"))
+		if err != nil {
+			t.Fatalf("reading symlink usr/bin/sh: %v", err)
+		}
+		if target != "dash" {
+			t.Fatalf("usr/bin/sh -> %q, want %q", target, "dash")
+		}
+
+		// dash must still be a regular file.
+		fi, err := os.Lstat(filepath.Join(dest, "usr/bin/dash"))
+		if err != nil {
+			t.Fatalf("stat usr/bin/dash: %v", err)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			loopTarget, _ := os.Readlink(filepath.Join(dest, "usr/bin/dash"))
+			t.Fatalf("usr/bin/dash is a symlink (-> %s), expected regular file", loopTarget)
+		}
+	})
+}
+
 func TestUnTar_PathTraversal(t *testing.T) {
 	makeTar := func(t *testing.T, hdrs ...tar.Header) *bytes.Buffer {
 		t.Helper()
