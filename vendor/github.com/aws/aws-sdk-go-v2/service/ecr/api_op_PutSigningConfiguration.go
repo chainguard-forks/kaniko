@@ -11,48 +11,45 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
-// Creates or updates the replication configuration for a registry. The existing
-// replication configuration for a repository can be retrieved with the DescribeRegistryAPI
-// action. The first time the PutReplicationConfiguration API is called, a
-// service-linked IAM role is created in your account for the replication process.
-// For more information, see [Using service-linked roles for Amazon ECR]in the Amazon Elastic Container Registry User Guide.
-// For more information on the custom role for replication, see [Creating an IAM role for replication].
+// Creates or updates the registry's signing configuration, which defines rules
+// for automatically signing images with Amazon Web Services Signer.
 //
-// When configuring cross-account replication, the destination account must grant
-// the source account permission to replicate. This permission is controlled using
-// a registry permissions policy. For more information, see PutRegistryPolicy.
+// For more information, see [Managed signing] in the Amazon Elastic Container Registry User Guide.
 //
-// [Creating an IAM role for replication]: https://docs.aws.amazon.com/AmazonECR/latest/userguide/replication-creation-templates.html#roles-creatingrole-user-console
-// [Using service-linked roles for Amazon ECR]: https://docs.aws.amazon.com/AmazonECR/latest/userguide/using-service-linked-roles.html
-func (c *Client) PutReplicationConfiguration(ctx context.Context, params *PutReplicationConfigurationInput, optFns ...func(*Options)) (*PutReplicationConfigurationOutput, error) {
+// To successfully generate a signature, the IAM principal pushing images must
+// have permission to sign payloads with the Amazon Web Services Signer signing
+// profile referenced in the signing configuration.
+//
+// [Managed signing]: https://docs.aws.amazon.com/AmazonECR/latest/userguide/managed-signing.html
+func (c *Client) PutSigningConfiguration(ctx context.Context, params *PutSigningConfigurationInput, optFns ...func(*Options)) (*PutSigningConfigurationOutput, error) {
 	if params == nil {
-		params = &PutReplicationConfigurationInput{}
+		params = &PutSigningConfigurationInput{}
 	}
 
-	result, metadata, err := c.invokeOperation(ctx, "PutReplicationConfiguration", params, optFns, c.addOperationPutReplicationConfigurationMiddlewares)
+	result, metadata, err := c.invokeOperation(ctx, "PutSigningConfiguration", params, optFns, c.addOperationPutSigningConfigurationMiddlewares)
 	if err != nil {
 		return nil, err
 	}
 
-	out := result.(*PutReplicationConfigurationOutput)
+	out := result.(*PutSigningConfigurationOutput)
 	out.ResultMetadata = metadata
 	return out, nil
 }
 
-type PutReplicationConfigurationInput struct {
+type PutSigningConfigurationInput struct {
 
-	// An object representing the replication configuration for a registry.
+	// The signing configuration to assign to the registry.
 	//
 	// This member is required.
-	ReplicationConfiguration *types.ReplicationConfiguration
+	SigningConfiguration *types.SigningConfiguration
 
 	noSmithyDocumentSerde
 }
 
-type PutReplicationConfigurationOutput struct {
+type PutSigningConfigurationOutput struct {
 
-	// The contents of the replication configuration for the registry.
-	ReplicationConfiguration *types.ReplicationConfiguration
+	// The registry's updated signing configuration.
+	SigningConfiguration *types.SigningConfiguration
 
 	// Metadata pertaining to the operation's result.
 	ResultMetadata middleware.Metadata
@@ -60,19 +57,19 @@ type PutReplicationConfigurationOutput struct {
 	noSmithyDocumentSerde
 }
 
-func (c *Client) addOperationPutReplicationConfigurationMiddlewares(stack *middleware.Stack, options Options) (err error) {
+func (c *Client) addOperationPutSigningConfigurationMiddlewares(stack *middleware.Stack, options Options) (err error) {
 	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
 		return err
 	}
-	err = stack.Serialize.Add(&awsAwsjson11_serializeOpPutReplicationConfiguration{}, middleware.After)
+	err = stack.Serialize.Add(&awsAwsjson11_serializeOpPutSigningConfiguration{}, middleware.After)
 	if err != nil {
 		return err
 	}
-	err = stack.Deserialize.Add(&awsAwsjson11_deserializeOpPutReplicationConfiguration{}, middleware.After)
+	err = stack.Deserialize.Add(&awsAwsjson11_deserializeOpPutSigningConfiguration{}, middleware.After)
 	if err != nil {
 		return err
 	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "PutReplicationConfiguration"); err != nil {
+	if err := addProtocolFinalizerMiddlewares(stack, options, "PutSigningConfiguration"); err != nil {
 		return fmt.Errorf("add protocol finalizers: %v", err)
 	}
 
@@ -127,10 +124,10 @@ func (c *Client) addOperationPutReplicationConfigurationMiddlewares(stack *middl
 	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
-	if err = addOpPutReplicationConfigurationValidationMiddleware(stack); err != nil {
+	if err = addOpPutSigningConfigurationValidationMiddleware(stack); err != nil {
 		return err
 	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opPutReplicationConfiguration(options.Region), middleware.Before); err != nil {
+	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opPutSigningConfiguration(options.Region), middleware.Before); err != nil {
 		return err
 	}
 	if err = addRecursionDetection(stack); err != nil {
@@ -160,10 +157,10 @@ func (c *Client) addOperationPutReplicationConfigurationMiddlewares(stack *middl
 	return nil
 }
 
-func newServiceMetadataMiddleware_opPutReplicationConfiguration(region string) *awsmiddleware.RegisterServiceMetadata {
+func newServiceMetadataMiddleware_opPutSigningConfiguration(region string) *awsmiddleware.RegisterServiceMetadata {
 	return &awsmiddleware.RegisterServiceMetadata{
 		Region:        region,
 		ServiceID:     ServiceID,
-		OperationName: "PutReplicationConfiguration",
+		OperationName: "PutSigningConfiguration",
 	}
 }

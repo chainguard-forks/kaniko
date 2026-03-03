@@ -11,48 +11,63 @@ import (
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
-// Creates or updates the replication configuration for a registry. The existing
-// replication configuration for a repository can be retrieved with the DescribeRegistryAPI
-// action. The first time the PutReplicationConfiguration API is called, a
-// service-linked IAM role is created in your account for the replication process.
-// For more information, see [Using service-linked roles for Amazon ECR]in the Amazon Elastic Container Registry User Guide.
-// For more information on the custom role for replication, see [Creating an IAM role for replication].
-//
-// When configuring cross-account replication, the destination account must grant
-// the source account permission to replicate. This permission is controlled using
-// a registry permissions policy. For more information, see PutRegistryPolicy.
-//
-// [Creating an IAM role for replication]: https://docs.aws.amazon.com/AmazonECR/latest/userguide/replication-creation-templates.html#roles-creatingrole-user-console
-// [Using service-linked roles for Amazon ECR]: https://docs.aws.amazon.com/AmazonECR/latest/userguide/using-service-linked-roles.html
-func (c *Client) PutReplicationConfiguration(ctx context.Context, params *PutReplicationConfigurationInput, optFns ...func(*Options)) (*PutReplicationConfigurationOutput, error) {
+// Transitions an image between storage classes. You can transition images from
+// Amazon ECR standard storage class to Amazon ECR archival storage class for
+// long-term storage, or restore archived images back to Amazon ECR standard.
+func (c *Client) UpdateImageStorageClass(ctx context.Context, params *UpdateImageStorageClassInput, optFns ...func(*Options)) (*UpdateImageStorageClassOutput, error) {
 	if params == nil {
-		params = &PutReplicationConfigurationInput{}
+		params = &UpdateImageStorageClassInput{}
 	}
 
-	result, metadata, err := c.invokeOperation(ctx, "PutReplicationConfiguration", params, optFns, c.addOperationPutReplicationConfigurationMiddlewares)
+	result, metadata, err := c.invokeOperation(ctx, "UpdateImageStorageClass", params, optFns, c.addOperationUpdateImageStorageClassMiddlewares)
 	if err != nil {
 		return nil, err
 	}
 
-	out := result.(*PutReplicationConfigurationOutput)
+	out := result.(*UpdateImageStorageClassOutput)
 	out.ResultMetadata = metadata
 	return out, nil
 }
 
-type PutReplicationConfigurationInput struct {
+type UpdateImageStorageClassInput struct {
 
-	// An object representing the replication configuration for a registry.
+	// An object with identifying information for an image in an Amazon ECR repository.
 	//
 	// This member is required.
-	ReplicationConfiguration *types.ReplicationConfiguration
+	ImageId *types.ImageIdentifier
+
+	// The name of the repository that contains the image to transition.
+	//
+	// This member is required.
+	RepositoryName *string
+
+	// The target storage class for the image.
+	//
+	// This member is required.
+	TargetStorageClass types.TargetStorageClass
+
+	// The Amazon Web Services account ID associated with the registry that contains
+	// the image to transition. If you do not specify a registry, the default registry
+	// is assumed.
+	RegistryId *string
 
 	noSmithyDocumentSerde
 }
 
-type PutReplicationConfigurationOutput struct {
+type UpdateImageStorageClassOutput struct {
 
-	// The contents of the replication configuration for the registry.
-	ReplicationConfiguration *types.ReplicationConfiguration
+	// An object with identifying information for an image in an Amazon ECR repository.
+	ImageId *types.ImageIdentifier
+
+	// The current status of the image after the call to UpdateImageStorageClass is
+	// complete. Valid values are ACTIVE , ARCHIVED , and ACTIVATING .
+	ImageStatus types.ImageStatus
+
+	// The registry ID associated with the request.
+	RegistryId *string
+
+	// The repository name associated with the request.
+	RepositoryName *string
 
 	// Metadata pertaining to the operation's result.
 	ResultMetadata middleware.Metadata
@@ -60,19 +75,19 @@ type PutReplicationConfigurationOutput struct {
 	noSmithyDocumentSerde
 }
 
-func (c *Client) addOperationPutReplicationConfigurationMiddlewares(stack *middleware.Stack, options Options) (err error) {
+func (c *Client) addOperationUpdateImageStorageClassMiddlewares(stack *middleware.Stack, options Options) (err error) {
 	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
 		return err
 	}
-	err = stack.Serialize.Add(&awsAwsjson11_serializeOpPutReplicationConfiguration{}, middleware.After)
+	err = stack.Serialize.Add(&awsAwsjson11_serializeOpUpdateImageStorageClass{}, middleware.After)
 	if err != nil {
 		return err
 	}
-	err = stack.Deserialize.Add(&awsAwsjson11_deserializeOpPutReplicationConfiguration{}, middleware.After)
+	err = stack.Deserialize.Add(&awsAwsjson11_deserializeOpUpdateImageStorageClass{}, middleware.After)
 	if err != nil {
 		return err
 	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "PutReplicationConfiguration"); err != nil {
+	if err := addProtocolFinalizerMiddlewares(stack, options, "UpdateImageStorageClass"); err != nil {
 		return fmt.Errorf("add protocol finalizers: %v", err)
 	}
 
@@ -127,10 +142,10 @@ func (c *Client) addOperationPutReplicationConfigurationMiddlewares(stack *middl
 	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
-	if err = addOpPutReplicationConfigurationValidationMiddleware(stack); err != nil {
+	if err = addOpUpdateImageStorageClassValidationMiddleware(stack); err != nil {
 		return err
 	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opPutReplicationConfiguration(options.Region), middleware.Before); err != nil {
+	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opUpdateImageStorageClass(options.Region), middleware.Before); err != nil {
 		return err
 	}
 	if err = addRecursionDetection(stack); err != nil {
@@ -160,10 +175,10 @@ func (c *Client) addOperationPutReplicationConfigurationMiddlewares(stack *middl
 	return nil
 }
 
-func newServiceMetadataMiddleware_opPutReplicationConfiguration(region string) *awsmiddleware.RegisterServiceMetadata {
+func newServiceMetadataMiddleware_opUpdateImageStorageClass(region string) *awsmiddleware.RegisterServiceMetadata {
 	return &awsmiddleware.RegisterServiceMetadata{
 		Region:        region,
 		ServiceID:     ServiceID,
-		OperationName: "PutReplicationConfiguration",
+		OperationName: "UpdateImageStorageClass",
 	}
 }

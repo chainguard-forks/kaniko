@@ -6,53 +6,43 @@ import (
 	"context"
 	"fmt"
 	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
-	"github.com/aws/aws-sdk-go-v2/service/ecr/types"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
-// Creates or updates the replication configuration for a registry. The existing
-// replication configuration for a repository can be retrieved with the DescribeRegistryAPI
-// action. The first time the PutReplicationConfiguration API is called, a
-// service-linked IAM role is created in your account for the replication process.
-// For more information, see [Using service-linked roles for Amazon ECR]in the Amazon Elastic Container Registry User Guide.
-// For more information on the custom role for replication, see [Creating an IAM role for replication].
-//
-// When configuring cross-account replication, the destination account must grant
-// the source account permission to replicate. This permission is controlled using
-// a registry permissions policy. For more information, see PutRegistryPolicy.
-//
-// [Creating an IAM role for replication]: https://docs.aws.amazon.com/AmazonECR/latest/userguide/replication-creation-templates.html#roles-creatingrole-user-console
-// [Using service-linked roles for Amazon ECR]: https://docs.aws.amazon.com/AmazonECR/latest/userguide/using-service-linked-roles.html
-func (c *Client) PutReplicationConfiguration(ctx context.Context, params *PutReplicationConfigurationInput, optFns ...func(*Options)) (*PutReplicationConfigurationOutput, error) {
+// Removes a principal from the pull time update exclusion list for a registry.
+// Once removed, Amazon ECR will resume updating the pull time if the specified
+// principal pulls an image.
+func (c *Client) DeregisterPullTimeUpdateExclusion(ctx context.Context, params *DeregisterPullTimeUpdateExclusionInput, optFns ...func(*Options)) (*DeregisterPullTimeUpdateExclusionOutput, error) {
 	if params == nil {
-		params = &PutReplicationConfigurationInput{}
+		params = &DeregisterPullTimeUpdateExclusionInput{}
 	}
 
-	result, metadata, err := c.invokeOperation(ctx, "PutReplicationConfiguration", params, optFns, c.addOperationPutReplicationConfigurationMiddlewares)
+	result, metadata, err := c.invokeOperation(ctx, "DeregisterPullTimeUpdateExclusion", params, optFns, c.addOperationDeregisterPullTimeUpdateExclusionMiddlewares)
 	if err != nil {
 		return nil, err
 	}
 
-	out := result.(*PutReplicationConfigurationOutput)
+	out := result.(*DeregisterPullTimeUpdateExclusionOutput)
 	out.ResultMetadata = metadata
 	return out, nil
 }
 
-type PutReplicationConfigurationInput struct {
+type DeregisterPullTimeUpdateExclusionInput struct {
 
-	// An object representing the replication configuration for a registry.
+	// The ARN of the IAM principal to remove from the pull time update exclusion list.
 	//
 	// This member is required.
-	ReplicationConfiguration *types.ReplicationConfiguration
+	PrincipalArn *string
 
 	noSmithyDocumentSerde
 }
 
-type PutReplicationConfigurationOutput struct {
+type DeregisterPullTimeUpdateExclusionOutput struct {
 
-	// The contents of the replication configuration for the registry.
-	ReplicationConfiguration *types.ReplicationConfiguration
+	// The ARN of the IAM principal that was removed from the pull time update
+	// exclusion list.
+	PrincipalArn *string
 
 	// Metadata pertaining to the operation's result.
 	ResultMetadata middleware.Metadata
@@ -60,19 +50,19 @@ type PutReplicationConfigurationOutput struct {
 	noSmithyDocumentSerde
 }
 
-func (c *Client) addOperationPutReplicationConfigurationMiddlewares(stack *middleware.Stack, options Options) (err error) {
+func (c *Client) addOperationDeregisterPullTimeUpdateExclusionMiddlewares(stack *middleware.Stack, options Options) (err error) {
 	if err := stack.Serialize.Add(&setOperationInputMiddleware{}, middleware.After); err != nil {
 		return err
 	}
-	err = stack.Serialize.Add(&awsAwsjson11_serializeOpPutReplicationConfiguration{}, middleware.After)
+	err = stack.Serialize.Add(&awsAwsjson11_serializeOpDeregisterPullTimeUpdateExclusion{}, middleware.After)
 	if err != nil {
 		return err
 	}
-	err = stack.Deserialize.Add(&awsAwsjson11_deserializeOpPutReplicationConfiguration{}, middleware.After)
+	err = stack.Deserialize.Add(&awsAwsjson11_deserializeOpDeregisterPullTimeUpdateExclusion{}, middleware.After)
 	if err != nil {
 		return err
 	}
-	if err := addProtocolFinalizerMiddlewares(stack, options, "PutReplicationConfiguration"); err != nil {
+	if err := addProtocolFinalizerMiddlewares(stack, options, "DeregisterPullTimeUpdateExclusion"); err != nil {
 		return fmt.Errorf("add protocol finalizers: %v", err)
 	}
 
@@ -127,10 +117,10 @@ func (c *Client) addOperationPutReplicationConfigurationMiddlewares(stack *middl
 	if err = addCredentialSource(stack, options); err != nil {
 		return err
 	}
-	if err = addOpPutReplicationConfigurationValidationMiddleware(stack); err != nil {
+	if err = addOpDeregisterPullTimeUpdateExclusionValidationMiddleware(stack); err != nil {
 		return err
 	}
-	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opPutReplicationConfiguration(options.Region), middleware.Before); err != nil {
+	if err = stack.Initialize.Add(newServiceMetadataMiddleware_opDeregisterPullTimeUpdateExclusion(options.Region), middleware.Before); err != nil {
 		return err
 	}
 	if err = addRecursionDetection(stack); err != nil {
@@ -160,10 +150,10 @@ func (c *Client) addOperationPutReplicationConfigurationMiddlewares(stack *middl
 	return nil
 }
 
-func newServiceMetadataMiddleware_opPutReplicationConfiguration(region string) *awsmiddleware.RegisterServiceMetadata {
+func newServiceMetadataMiddleware_opDeregisterPullTimeUpdateExclusion(region string) *awsmiddleware.RegisterServiceMetadata {
 	return &awsmiddleware.RegisterServiceMetadata{
 		Region:        region,
 		ServiceID:     ServiceID,
-		OperationName: "PutReplicationConfiguration",
+		OperationName: "DeregisterPullTimeUpdateExclusion",
 	}
 }
