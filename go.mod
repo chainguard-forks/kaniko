@@ -1,6 +1,6 @@
 module github.com/chainguard-dev/kaniko
 
-go 1.25.6
+go 1.25.7
 
 require (
 	cloud.google.com/go/storage v1.61.3
@@ -16,7 +16,7 @@ require (
 	github.com/go-git/go-git/v5 v5.17.0
 	github.com/golang/mock v1.6.0
 	github.com/google/go-cmp v0.7.0
-	github.com/google/go-containerregistry v0.21.2
+	github.com/google/go-containerregistry v0.21.3
 	github.com/google/go-github v17.0.0+incompatible
 	github.com/google/slowjam v1.1.2
 	github.com/karrick/godirwalk v1.17.0
@@ -77,10 +77,10 @@ require (
 	github.com/containerd/continuity v0.4.5 // indirect
 	github.com/containerd/stargz-snapshotter/estargz v0.18.2 // indirect
 	github.com/dimchansky/utfbom v1.1.1 // indirect
-	github.com/docker/cli v29.2.1+incompatible // indirect
+	github.com/docker/cli v29.3.0+incompatible // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.5 // indirect
-	github.com/docker/go-connections v0.5.0 // indirect
+	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-metrics v0.0.1 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/ePirat/docker-credential-gitlabci v1.0.0
@@ -170,6 +170,8 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.1.0 // indirect
+	github.com/moby/moby/api v1.54.0 // indirect
+	github.com/moby/moby/client v0.3.0 // indirect
 	github.com/moby/sys/atomicwriter v0.1.0 // indirect
 	github.com/moby/sys/reexec v0.1.0 // indirect
 	github.com/moby/sys/user v0.4.0 // indirect
