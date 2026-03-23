@@ -20,7 +20,7 @@ require (
 	github.com/google/go-github v17.0.0+incompatible
 	github.com/google/slowjam v1.1.2
 	github.com/karrick/godirwalk v1.17.0
-	github.com/minio/highwayhash v1.0.3
+	github.com/minio/highwayhash v1.0.4
 	github.com/moby/buildkit v0.26.3
 	github.com/otiai10/copy v1.14.1
 	github.com/pkg/errors v0.9.1

@@ -819,7 +819,7 @@ github.com/klauspost/compress/zstd/internal/xxhash
 # github.com/magiconair/properties v1.8.7
 ## explicit; go 1.19
 github.com/magiconair/properties
-# github.com/minio/highwayhash v1.0.3
+# github.com/minio/highwayhash v1.0.4
 ## explicit; go 1.15
 github.com/minio/highwayhash
 # github.com/mitchellh/go-homedir v1.1.0
