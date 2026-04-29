@@ -21,7 +21,7 @@ require (
 	github.com/google/slowjam v1.1.2
 	github.com/karrick/godirwalk v1.17.0
 	github.com/minio/highwayhash v1.0.4
-	github.com/moby/buildkit v0.28.1
+	github.com/moby/buildkit v0.29.0
 	github.com/otiai10/copy v1.14.1
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.9.4
@@ -144,14 +144,14 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.10 // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 // indirect
-	github.com/containerd/cgroups/v3 v3.1.2 // indirect
+	github.com/containerd/cgroups/v3 v3.1.3 // indirect
 	github.com/containerd/containerd/api v1.10.0 // indirect
-	github.com/containerd/containerd/v2 v2.2.1 // indirect
+	github.com/containerd/containerd/v2 v2.2.2 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/platforms v1.0.0-rc.2 // indirect
-	github.com/containerd/ttrpc v1.2.7 // indirect
+	github.com/containerd/ttrpc v1.2.8 // indirect
 	github.com/containerd/typeurl/v2 v2.2.3 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.36.0 // indirect
