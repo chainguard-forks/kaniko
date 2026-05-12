@@ -34,7 +34,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -902,12 +901,11 @@ func TestBuildWithAnnotations(t *testing.T) {
 	if len(kanikoAnnotations) == 0 {
 		t.Fatalf("No annotations found for kaniko image %s", kanikoImage)
 	}
-	if diff := cmp.Diff(kanikoAnnotations, dockerAnnotations); diff != "" {
-		t.Errorf("Annotation don't match (-kaniko, +docker): %s", diff)
-	}
-
 	if kanikoAnnotations[annotationKey] != annotationValue {
-		t.Errorf("Expected annotation %q to be %q, got annotations: %v", annotationKey, annotationValue, kanikoAnnotations)
+		t.Errorf("kaniko: expected annotation %q=%q, got annotations: %v", annotationKey, annotationValue, kanikoAnnotations)
+	}
+	if dockerAnnotations[annotationKey] != annotationValue {
+		t.Errorf("docker: expected annotation %q=%q, got annotations: %v", annotationKey, annotationValue, dockerAnnotations)
 	}
 }
 
