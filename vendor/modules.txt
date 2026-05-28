@@ -42,7 +42,7 @@ cloud.google.com/go/iam/apiv1/iampb
 cloud.google.com/go/monitoring/apiv3/v2
 cloud.google.com/go/monitoring/apiv3/v2/monitoringpb
 cloud.google.com/go/monitoring/internal
-# cloud.google.com/go/storage v1.62.1
+# cloud.google.com/go/storage v1.62.2
 ## explicit; go 1.25.0
 cloud.google.com/go/storage
 cloud.google.com/go/storage/experimental
@@ -242,11 +242,11 @@ github.com/aws/aws-sdk-go-v2/internal/timeconv
 ## explicit; go 1.24
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream
 github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream/eventstreamapi
-# github.com/aws/aws-sdk-go-v2/config v1.32.17
+# github.com/aws/aws-sdk-go-v2/config v1.32.18
 ## explicit; go 1.24
 github.com/aws/aws-sdk-go-v2/config
 github.com/aws/aws-sdk-go-v2/config/internal/ini
-# github.com/aws/aws-sdk-go-v2/credentials v1.19.16
+# github.com/aws/aws-sdk-go-v2/credentials v1.19.17
 ## explicit; go 1.24
 github.com/aws/aws-sdk-go-v2/credentials
 github.com/aws/aws-sdk-go-v2/credentials/ec2rolecreds
@@ -260,7 +260,7 @@ github.com/aws/aws-sdk-go-v2/credentials/stscreds
 ## explicit; go 1.24
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds/internal/config
-# github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.18
+# github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.22.20
 ## explicit; go 1.24
 github.com/aws/aws-sdk-go-v2/feature/s3/manager
 # github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.23
@@ -287,7 +287,7 @@ github.com/aws/aws-sdk-go-v2/service/ecrpublic/types
 # github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.9
 ## explicit; go 1.24
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding
-# github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.15
+# github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.16
 ## explicit; go 1.24
 github.com/aws/aws-sdk-go-v2/service/internal/checksum
 # github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.23
@@ -298,7 +298,7 @@ github.com/aws/aws-sdk-go-v2/service/internal/presigned-url
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared/arn
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared/config
-# github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
+# github.com/aws/aws-sdk-go-v2/service/s3 v1.102.0
 ## explicit; go 1.24
 github.com/aws/aws-sdk-go-v2/service/s3
 github.com/aws/aws-sdk-go-v2/service/s3/internal/arn
@@ -315,7 +315,7 @@ github.com/aws/aws-sdk-go-v2/service/signin/types
 github.com/aws/aws-sdk-go-v2/service/sso
 github.com/aws/aws-sdk-go-v2/service/sso/internal/endpoints
 github.com/aws/aws-sdk-go-v2/service/sso/types
-# github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.21
+# github.com/aws/aws-sdk-go-v2/service/ssooidc v1.36.0
 ## explicit; go 1.24
 github.com/aws/aws-sdk-go-v2/service/ssooidc
 github.com/aws/aws-sdk-go-v2/service/ssooidc/internal/endpoints
@@ -339,6 +339,7 @@ github.com/aws/smithy-go/encoding/httpbinding
 github.com/aws/smithy-go/encoding/json
 github.com/aws/smithy-go/encoding/xml
 github.com/aws/smithy-go/endpoints
+github.com/aws/smithy-go/endpoints/private/bdd
 github.com/aws/smithy-go/endpoints/private/rulesfn
 github.com/aws/smithy-go/internal/sync/singleflight
 github.com/aws/smithy-go/io
@@ -402,7 +403,7 @@ github.com/cncf/xds/go/xds/type/v3
 # github.com/containerd/cgroups/v3 v3.1.3
 ## explicit; go 1.22.0
 github.com/containerd/cgroups/v3/cgroup1/stats
-# github.com/containerd/containerd v1.7.31
+# github.com/containerd/containerd v1.7.32
 ## explicit; go 1.24.0
 github.com/containerd/containerd/platforms
 # github.com/containerd/containerd/api v1.10.0
@@ -447,10 +448,6 @@ github.com/containerd/log
 # github.com/containerd/platforms v1.0.0-rc.2
 ## explicit; go 1.20
 github.com/containerd/platforms
-# github.com/containerd/stargz-snapshotter/estargz v0.18.2
-## explicit; go 1.24.0
-github.com/containerd/stargz-snapshotter/estargz
-github.com/containerd/stargz-snapshotter/estargz/errorutil
 # github.com/containerd/ttrpc v1.2.8
 ## explicit; go 1.22
 github.com/containerd/ttrpc
@@ -530,8 +527,8 @@ github.com/docker/docker/pkg/useragent
 ## explicit; go 1.21
 github.com/docker/docker-credential-helpers/client
 github.com/docker/docker-credential-helpers/credentials
-# github.com/docker/go-connections v0.6.0
-## explicit; go 1.18
+# github.com/docker/go-connections v0.7.0
+## explicit; go 1.23
 github.com/docker/go-connections/nat
 github.com/docker/go-connections/sockets
 github.com/docker/go-connections/tlsconfig
@@ -697,11 +694,10 @@ github.com/google/go-cmp/cmp/internal/diff
 github.com/google/go-cmp/cmp/internal/flags
 github.com/google/go-cmp/cmp/internal/function
 github.com/google/go-cmp/cmp/internal/value
-# github.com/google/go-containerregistry v0.21.5
+# github.com/google/go-containerregistry v0.21.6
 ## explicit; go 1.25.0
 github.com/google/go-containerregistry/internal/and
 github.com/google/go-containerregistry/internal/compression
-github.com/google/go-containerregistry/internal/estargz
 github.com/google/go-containerregistry/internal/gzip
 github.com/google/go-containerregistry/internal/redact
 github.com/google/go-containerregistry/internal/retry
@@ -854,7 +850,7 @@ github.com/moby/go-archive/tarheader
 # github.com/moby/locker v1.0.1
 ## explicit; go 1.13
 github.com/moby/locker
-# github.com/moby/moby/api v1.54.1
+# github.com/moby/moby/api v1.54.2
 ## explicit; go 1.24
 github.com/moby/moby/api/types
 github.com/moby/moby/api/types/blkiodev
@@ -873,7 +869,7 @@ github.com/moby/moby/api/types/storage
 github.com/moby/moby/api/types/swarm
 github.com/moby/moby/api/types/system
 github.com/moby/moby/api/types/volume
-# github.com/moby/moby/client v0.4.0
+# github.com/moby/moby/client v0.4.1
 ## explicit; go 1.24
 github.com/moby/moby/client
 github.com/moby/moby/client/internal
