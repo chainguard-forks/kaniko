@@ -432,16 +432,18 @@ func ExtractFile(dest string, hdr *tar.Header, cleanedName string, tr io.Reader)
 
 	case tar.TypeSymlink:
 		logrus.Tracef("Symlink from %s to %s", hdr.Linkname, path)
-		// Resolve the symlink target relative to the entry's parent directory
-		// to get the effective path from the extraction root, then verify it
-		// stays within the destination.
-		effectivePath := filepath.Clean(filepath.Join(filepath.Dir(cleanedName), hdr.Linkname))
-		if filepath.IsAbs(hdr.Linkname) {
-			effectivePath = filepath.Clean(hdr.Linkname)
-		}
-		if effectivePath == ".." || strings.HasPrefix(effectivePath, "../") {
-			return fmt.Errorf("symlink target %q resolves outside destination", hdr.Linkname)
-		}
+		// Do not validate or rewrite the symlink target. Extracting a symlink
+		// only writes the target *string* to disk at "path", which is already
+		// confined to dest by the SecureJoin on the parent directory above —
+		// creating the link never traverses anywhere itself. A target that
+		// lexically escapes the root is not a traversal risk: excess ".."
+		// components are clamped at the root when the link is followed, and any
+		// later tar entry that writes *through* this symlink is independently
+		// confined by SecureJoin on its own parent directory. Rejecting targets
+		// here (added with the GHSA-6rxq-q92g-4rmf fix) broke legitimate base
+		// images whose symlinks use more ".." than their depth, e.g.
+		// amazoncorretto's
+		// cacerts -> ../../../../../../../../../../etc/pki/java/cacerts.
 		// The base directory for a symlink may not exist before it is created.
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
