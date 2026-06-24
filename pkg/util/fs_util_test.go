@@ -945,11 +945,18 @@ func TestExtractFile_PathTraversal(t *testing.T) {
 			t.Fatalf("symlink target = %q, want %q (stored verbatim)", target, "../outside")
 		}
 
-		// Writing through the symlink must stay inside dest.
+		// Writing through the symlink must stay inside dest. SecureJoin on the
+		// parent resolves "link" and clamps it within dest, so the file lands at
+		// dest/outside/written.txt, never at the sibling ../outside.
 		writeHdr := fileHeader("./link/written.txt", "data", 0o644, defaultTestTime)
-		_ = ExtractFile(dest, writeHdr, filepath.Clean(writeHdr.Name), bytes.NewReader([]byte("data")))
+		if err := ExtractFile(dest, writeHdr, filepath.Clean(writeHdr.Name), bytes.NewReader([]byte("data"))); err != nil {
+			t.Fatalf("write through symlink should succeed (confined), got: %v", err)
+		}
 		if _, statErr := os.Stat(filepath.Join(filepath.Dir(dest), "outside", "written.txt")); statErr == nil {
 			t.Fatal("file was written outside dest through symlink")
+		}
+		if _, statErr := os.Stat(filepath.Join(dest, "outside", "written.txt")); statErr != nil {
+			t.Fatalf("write was not confined to dest/outside as expected: %v", statErr)
 		}
 	})
 
@@ -972,17 +979,69 @@ func TestExtractFile_PathTraversal(t *testing.T) {
 		if err := ExtractFile(dest, fileHdr, filepath.Clean(fileHdr.Name), bytes.NewReader([]byte("attacker"))); err != nil {
 			t.Fatalf("overwriting symlink with file should succeed: %v", err)
 		}
-		// The attacker content must NOT have been written to the symlink target.
-		if _, statErr := os.Stat(escaped); statErr == nil {
-			t.Fatalf("write followed the symlink and escaped to %s", escaped)
-		}
-		// dest/evil must now be a regular file, not a symlink.
+		// dest/evil must now be a regular file (the symlink was Lstat-removed
+		// before os.Create), not a symlink, and must hold the written content.
 		fi, err := os.Lstat(filepath.Join(dest, "evil"))
 		if err != nil {
 			t.Fatalf("lstat dest/evil: %v", err)
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
 			t.Fatal("dest/evil is still a symlink; should be a regular file")
+		}
+		got, err := os.ReadFile(filepath.Join(dest, "evil"))
+		if err != nil {
+			t.Fatalf("reading dest/evil: %v", err)
+		}
+		if string(got) != "attacker" {
+			t.Fatalf("dest/evil content = %q, want %q (write not confined in-dest)", got, "attacker")
+		}
+		// And nothing was created at the symlink target outside dest.
+		if _, statErr := os.Stat(escaped); statErr == nil {
+			t.Fatalf("write followed the symlink and escaped to %s", escaped)
+		}
+	})
+
+	t.Run("TypeDir must not chmod a directory outside dest via a pre-existing symlink", func(t *testing.T) {
+		// PSEC-1492 High: an escaping symlink (now stored verbatim) followed by
+		// a same-name directory entry must not let MkdirAllWithPermissions
+		// follow the symlink and chmod/chown the external target. The symlink is
+		// removed before the directory is created. Fails before the TypeDir fix.
+		outsideDir := t.TempDir()
+		victim := filepath.Join(outsideDir, "victim")
+		if err := os.Mkdir(victim, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		dest := t.TempDir()
+
+		// 1) escaping symlink ./evil -> <outsideDir>/victim
+		linkHdr := linkHeader("./evil", victim)
+		if err := ExtractFile(dest, linkHdr, filepath.Clean(linkHdr.Name), bytes.NewReader(nil)); err != nil {
+			t.Fatalf("symlink creation should succeed: %v", err)
+		}
+		// 2) same-name directory entry with an attacker-controlled mode
+		dHdr := dirHeader("./evil", 0o777)
+		if err := ExtractFile(dest, dHdr, filepath.Clean(dHdr.Name), bytes.NewReader(nil)); err != nil {
+			t.Fatalf("dir creation should succeed: %v", err)
+		}
+
+		// The external victim's mode must be unchanged (not chmod'd to 0777).
+		vi, err := os.Lstat(victim)
+		if err != nil {
+			t.Fatalf("lstat victim: %v", err)
+		}
+		if vi.Mode().Perm() != 0o700 {
+			t.Fatalf("external dir mode changed to %o; chmod escaped through the symlink", vi.Mode().Perm())
+		}
+		// dest/evil must now be a real directory, not the symlink.
+		di, err := os.Lstat(filepath.Join(dest, "evil"))
+		if err != nil {
+			t.Fatalf("lstat dest/evil: %v", err)
+		}
+		if di.Mode()&os.ModeSymlink != 0 {
+			t.Fatal("dest/evil is still a symlink; should be a real directory")
+		}
+		if !di.IsDir() {
+			t.Fatal("dest/evil is not a directory")
 		}
 	})
 
@@ -1239,12 +1298,16 @@ func TestUnTar_PathTraversal(t *testing.T) {
 				Uid: os.Getuid(), Gid: os.Getgid(),
 			},
 		)
-		// Extraction may or may not return an error; either way the file
-		// must not appear outside dest.
-		UnTar(buf, dest)
-
+		if _, err := UnTar(buf, dest); err != nil {
+			t.Fatalf("extraction should succeed (confined), got: %v", err)
+		}
+		// The file must not escape, and must land at the confined in-dest path.
 		if _, err := os.Stat(filepath.Join(outsideDir, "written.txt")); err == nil {
 			t.Fatal("file was written outside dest through symlink")
+		}
+		confined := filepath.Join(dest, outsideDir, "written.txt")
+		if _, err := os.Stat(confined); err != nil {
+			t.Fatalf("write was not confined to dest as expected (%s): %v", confined, err)
 		}
 	})
 
@@ -1266,9 +1329,17 @@ func TestUnTar_PathTraversal(t *testing.T) {
 				Uid: os.Getuid(), Gid: os.Getgid(),
 			},
 		)
-		UnTar(buf, dest)
+		if _, err := UnTar(buf, dest); err != nil {
+			t.Fatalf("extraction should succeed (confined), got: %v", err)
+		}
 		if _, err := os.Stat(marker); err == nil {
 			t.Fatalf("file escaped to %s through deep relative symlink", marker)
+		}
+		// SecureJoin clamps the ".." at the dest root, so the write must land at
+		// the confined in-dest location rather than escaping.
+		confined := filepath.Join(dest, outsideDir, "pwned.txt")
+		if _, err := os.Stat(confined); err != nil {
+			t.Fatalf("write was not confined to dest as expected (%s): %v", confined, err)
 		}
 	})
 
