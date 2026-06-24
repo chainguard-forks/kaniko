@@ -322,13 +322,17 @@ func ExtractFile(dest string, hdr *tar.Header, cleanedName string, tr io.Reader)
 	// creating self-referential symlink loops (e.g. dash -> dash).
 	secureDir, err := securejoin.SecureJoin(dest, filepath.Dir(cleanedName))
 	if err != nil {
-		// During layer extraction, symlink chains may be incomplete,
-		// causing ELOOP. Fall back to the lexical path — the OS will
-		// encounter the same resolution failure if the path is used.
 		if !errors.Is(err, syscall.ELOOP) {
 			return fmt.Errorf("resolving path for %q: %w", hdr.Name, err)
 		}
-		secureDir = filepath.Join(dest, filepath.Dir(cleanedName))
+		// The parent path contains a symlink loop, so it cannot be securely
+		// resolved. Skip the entry rather than falling back to an unresolved
+		// lexical path: the OS could dereference an escaping symlink in that
+		// path and write outside dest (PSEC-1492). Skipping (vs erroring) mirrors
+		// the ignore-list skip below and keeps one pathological entry from
+		// aborting the whole image build, while staying fail-closed.
+		logrus.Warnf("Skipping %q: parent path cannot be securely resolved (symlink loop)", hdr.Name)
+		return nil
 	}
 	path := filepath.Join(secureDir, filepath.Base(cleanedName))
 	base := filepath.Base(path)
@@ -353,7 +357,7 @@ func ExtractFile(dest string, hdr *tar.Header, cleanedName string, tr io.Reader)
 		// It's possible a file is in the tar before its directory,
 		// or a file was copied over a directory prior to now
 		fi, err := os.Stat(dir)
-		if os.IsNotExist(err) || !fi.IsDir() {
+		if err != nil || !fi.IsDir() {
 			logrus.Debugf("Base %s for file %s does not exist. Creating.", base, path)
 
 			if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -393,6 +397,18 @@ func ExtractFile(dest string, hdr *tar.Header, cleanedName string, tr io.Reader)
 		currFile.Close()
 	case tar.TypeDir:
 		logrus.Tracef("Creating dir %s", path)
+		// If a symlink already exists at this exact path (e.g. an earlier
+		// escaping symlink entry of the same name), remove it before creating
+		// the directory. MkdirAllWithPermissions stats the path and would
+		// otherwise follow the symlink and chown/chmod its target outside dest
+		// (PSEC-1492). Mirror the delete-before-write the other branches do, but
+		// only for a symlink: a pre-existing real directory is left intact so
+		// its already-extracted contents are preserved.
+		if fi, lerr := os.Lstat(path); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			if err := os.Remove(path); err != nil {
+				return errors.Wrapf(err, "error removing symlink %s to make way for new directory", path)
+			}
+		}
 		if err := MkdirAllWithPermissions(path, mode, int64(uid), int64(gid)); err != nil {
 			return err
 		}
@@ -432,16 +448,27 @@ func ExtractFile(dest string, hdr *tar.Header, cleanedName string, tr io.Reader)
 
 	case tar.TypeSymlink:
 		logrus.Tracef("Symlink from %s to %s", hdr.Linkname, path)
-		// Resolve the symlink target relative to the entry's parent directory
-		// to get the effective path from the extraction root, then verify it
-		// stays within the destination.
-		effectivePath := filepath.Clean(filepath.Join(filepath.Dir(cleanedName), hdr.Linkname))
-		if filepath.IsAbs(hdr.Linkname) {
-			effectivePath = filepath.Clean(hdr.Linkname)
-		}
-		if effectivePath == ".." || strings.HasPrefix(effectivePath, "../") {
-			return fmt.Errorf("symlink target %q resolves outside destination", hdr.Linkname)
-		}
+		// Do not validate or rewrite the symlink target. Extracting a symlink
+		// only writes the target *string* to disk at "path", which is already
+		// confined to dest by the SecureJoin on the parent directory above —
+		// creating the link never traverses anywhere itself. Rejecting targets
+		// here (added with the GHSA-6rxq-q92g-4rmf fix) broke legitimate base
+		// images whose symlinks use more ".." than their depth, e.g.
+		// amazoncorretto's
+		// cacerts -> ../../../../../../../../../../etc/pki/java/cacerts.
+		//
+		// Containment of an escaping symlink is enforced at WRITE time, not by
+		// checking the target string:
+		//   - When a later entry has this symlink as a *parent* component,
+		//     SecureJoin on that entry's parent resolves and clamps it within
+		//     dest (see above).
+		//   - When a later entry reuses this exact name, the TypeReg/TypeLink/
+		//     TypeSymlink branches delete the existing entry first, and the
+		//     TypeDir branch removes a pre-existing symlink before MkdirAll, so
+		//     the write never follows it outside dest.
+		// When a later entry's parent cannot be securely resolved (a symlink
+		// loop, ELOOP above), that entry is skipped rather than written through
+		// an unresolved lexical path, so it is never written outside dest.
 		// The base directory for a symlink may not exist before it is created.
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err

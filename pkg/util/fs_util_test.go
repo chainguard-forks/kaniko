@@ -926,15 +926,165 @@ func TestExtractFile_PathTraversal(t *testing.T) {
 		}
 	})
 
-	t.Run("symlink target outside dest via relative path", func(t *testing.T) {
+	t.Run("symlink with relative escaping target is created but write-through is confined", func(t *testing.T) {
+		// A symlink whose target lexically escapes dest must still be created
+		// verbatim (this is how real base images ship, e.g. amazoncorretto's
+		// cacerts -> ../../../../../../../../../../etc/pki/java/cacerts). The
+		// traversal protection is enforced when a later entry writes *through*
+		// the symlink, not by rejecting the link target.
 		dest := t.TempDir()
 		hdr := linkHeader("./link", "../outside")
-		err := ExtractFile(dest, hdr, filepath.Clean(hdr.Name), bytes.NewReader(nil))
-		if err == nil {
-			t.Fatal("expected error for symlink target outside dest, got nil")
+		if err := ExtractFile(dest, hdr, filepath.Clean(hdr.Name), bytes.NewReader(nil)); err != nil {
+			t.Fatalf("symlink with relative escaping target should be created, not rejected: %v", err)
 		}
-		if !strings.Contains(err.Error(), "resolves outside destination") {
-			t.Fatalf("unexpected error: %v", err)
+		target, err := os.Readlink(filepath.Join(dest, "link"))
+		if err != nil {
+			t.Fatalf("symlink was not created: %v", err)
+		}
+		if target != "../outside" {
+			t.Fatalf("symlink target = %q, want %q (stored verbatim)", target, "../outside")
+		}
+
+		// Writing through the symlink must stay inside dest. SecureJoin on the
+		// parent resolves "link" and clamps it within dest, so the file lands at
+		// dest/outside/written.txt, never at the sibling ../outside.
+		writeHdr := fileHeader("./link/written.txt", "data", 0o644, defaultTestTime)
+		if err := ExtractFile(dest, writeHdr, filepath.Clean(writeHdr.Name), bytes.NewReader([]byte("data"))); err != nil {
+			t.Fatalf("write through symlink should succeed (confined), got: %v", err)
+		}
+		if _, statErr := os.Stat(filepath.Join(filepath.Dir(dest), "outside", "written.txt")); statErr == nil {
+			t.Fatal("file was written outside dest through symlink")
+		}
+		if _, statErr := os.Stat(filepath.Join(dest, "outside", "written.txt")); statErr != nil {
+			t.Fatalf("write was not confined to dest/outside as expected: %v", statErr)
+		}
+	})
+
+	t.Run("regular file overwriting a pre-existing escaping symlink is contained", func(t *testing.T) {
+		// A tar can ship an (absolute or relative) escaping symlink and then a
+		// regular file at the SAME name. The write must NOT follow the symlink
+		// to its target: FilepathExists uses Lstat and the entry is removed
+		// before os.Create, so a fresh regular file is written inside dest.
+		outsideDir := t.TempDir() // sibling of dest, must stay untouched
+		escaped := filepath.Join(outsideDir, "pwned")
+		dest := t.TempDir()
+
+		// 1) create the escaping symlink: ./evil -> <outsideDir>/pwned
+		linkHdr := linkHeader("./evil", escaped)
+		if err := ExtractFile(dest, linkHdr, filepath.Clean(linkHdr.Name), bytes.NewReader(nil)); err != nil {
+			t.Fatalf("symlink creation should succeed: %v", err)
+		}
+		// 2) write a regular file at the same name with attacker content
+		fileHdr := fileHeader("./evil", "attacker", 0o644, defaultTestTime)
+		if err := ExtractFile(dest, fileHdr, filepath.Clean(fileHdr.Name), bytes.NewReader([]byte("attacker"))); err != nil {
+			t.Fatalf("overwriting symlink with file should succeed: %v", err)
+		}
+		// dest/evil must now be a regular file (the symlink was Lstat-removed
+		// before os.Create), not a symlink, and must hold the written content.
+		fi, err := os.Lstat(filepath.Join(dest, "evil"))
+		if err != nil {
+			t.Fatalf("lstat dest/evil: %v", err)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			t.Fatal("dest/evil is still a symlink; should be a regular file")
+		}
+		got, err := os.ReadFile(filepath.Join(dest, "evil"))
+		if err != nil {
+			t.Fatalf("reading dest/evil: %v", err)
+		}
+		if string(got) != "attacker" {
+			t.Fatalf("dest/evil content = %q, want %q (write not confined in-dest)", got, "attacker")
+		}
+		// And nothing was created at the symlink target outside dest.
+		if _, statErr := os.Stat(escaped); statErr == nil {
+			t.Fatalf("write followed the symlink and escaped to %s", escaped)
+		}
+	})
+
+	t.Run("TypeDir must not chmod a directory outside dest via a pre-existing symlink", func(t *testing.T) {
+		// PSEC-1492 High: an escaping symlink (now stored verbatim) followed by
+		// a same-name directory entry must not let MkdirAllWithPermissions
+		// follow the symlink and chmod/chown the external target. The symlink is
+		// removed before the directory is created. Fails before the TypeDir fix.
+		outsideDir := t.TempDir()
+		victim := filepath.Join(outsideDir, "victim")
+		if err := os.Mkdir(victim, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		dest := t.TempDir()
+
+		// 1) escaping symlink ./evil -> <outsideDir>/victim
+		linkHdr := linkHeader("./evil", victim)
+		if err := ExtractFile(dest, linkHdr, filepath.Clean(linkHdr.Name), bytes.NewReader(nil)); err != nil {
+			t.Fatalf("symlink creation should succeed: %v", err)
+		}
+		// 2) same-name directory entry with an attacker-controlled mode
+		dHdr := dirHeader("./evil", 0o777)
+		if err := ExtractFile(dest, dHdr, filepath.Clean(dHdr.Name), bytes.NewReader(nil)); err != nil {
+			t.Fatalf("dir creation should succeed: %v", err)
+		}
+
+		// The external victim's mode must be unchanged (not chmod'd to 0777).
+		vi, err := os.Lstat(victim)
+		if err != nil {
+			t.Fatalf("lstat victim: %v", err)
+		}
+		if vi.Mode().Perm() != 0o700 {
+			t.Fatalf("external dir mode changed to %o; chmod escaped through the symlink", vi.Mode().Perm())
+		}
+		// dest/evil must now be a real directory, not the symlink.
+		di, err := os.Lstat(filepath.Join(dest, "evil"))
+		if err != nil {
+			t.Fatalf("lstat dest/evil: %v", err)
+		}
+		if di.Mode()&os.ModeSymlink != 0 {
+			t.Fatal("dest/evil is still a symlink; should be a real directory")
+		}
+		if !di.IsDir() {
+			t.Fatal("dest/evil is not a directory")
+		}
+	})
+
+	t.Run("entry whose parent is a symlink loop is skipped", func(t *testing.T) {
+		// SecureJoin returns ELOOP for a parent path containing a symlink loop.
+		// The entry must be skipped (returns nil, writes nothing) rather than
+		// written through an unresolved lexical path (PSEC-1492 ELOOP fallback).
+		dest := t.TempDir()
+		// Build a loop inside dest: a -> b, b -> a.
+		if err := ExtractFile(dest, linkHeader("./a", "b"), "a", bytes.NewReader(nil)); err != nil {
+			t.Fatalf("creating symlink a: %v", err)
+		}
+		if err := ExtractFile(dest, linkHeader("./b", "a"), "b", bytes.NewReader(nil)); err != nil {
+			t.Fatalf("creating symlink b: %v", err)
+		}
+		// An entry under the looping path must be skipped without error.
+		hdr := fileHeader("./a/foo.txt", "data", 0o644, defaultTestTime)
+		if err := ExtractFile(dest, hdr, filepath.Clean(hdr.Name), bytes.NewReader([]byte("data"))); err != nil {
+			t.Fatalf("entry under symlink loop should be skipped (nil), got: %v", err)
+		}
+		// Nothing should have been written under the looping parent.
+		if _, err := os.Lstat(filepath.Join(dest, "a", "foo.txt")); err == nil {
+			t.Fatal("file was written under a symlink-loop parent")
+		}
+	})
+
+	t.Run("symlink with excess-dotdot target (amazoncorretto cacerts) is allowed", func(t *testing.T) {
+		// Regression test for the #326/#330 symlink target check: a symlink
+		// deep in the tree whose target has more ".." than its depth resolves
+		// to the root at follow time and must not be rejected.
+		dest := t.TempDir()
+		name := "usr/lib/jvm/java-21-amazon-corretto/lib/security/cacerts"
+		target := "../../../../../../../../../../etc/pki/java/cacerts"
+		hdr := linkHeader(name, target)
+		if err := ExtractFile(dest, hdr, filepath.Clean(hdr.Name), bytes.NewReader(nil)); err != nil {
+			t.Fatalf("excess-dotdot symlink should be allowed: %v", err)
+		}
+		got, err := os.Readlink(filepath.Join(dest, name))
+		if err != nil {
+			t.Fatalf("symlink was not created: %v", err)
+		}
+		if got != target {
+			t.Fatalf("symlink target = %q, want %q (stored verbatim)", got, target)
 		}
 	})
 
@@ -1119,13 +1269,24 @@ func TestUnTar_PathTraversal(t *testing.T) {
 		}
 	})
 
-	t.Run("symlink with dotdot target is rejected", func(t *testing.T) {
+	t.Run("symlink with dotdot target is created verbatim", func(t *testing.T) {
+		// A symlink whose target uses ".." must be stored verbatim, matching
+		// upstream kaniko and real container runtimes. Creating the link never
+		// follows the target; traversal is prevented when writing *through* a
+		// symlink (covered by "file through symlink is confined" below).
 		buf := makeTar(t, tar.Header{
 			Name: "ext-link", Typeflag: tar.TypeSymlink, Linkname: "../../etc/passwd",
 		})
 		dest := t.TempDir()
-		if _, err := UnTar(buf, dest); err == nil {
-			t.Fatal("expected error for symlink with dotdot target, got nil")
+		if _, err := UnTar(buf, dest); err != nil {
+			t.Fatalf("symlink with dotdot target should be created, not rejected: %v", err)
+		}
+		target, err := os.Readlink(filepath.Join(dest, "ext-link"))
+		if err != nil {
+			t.Fatalf("symlink was not created: %v", err)
+		}
+		if target != "../../etc/passwd" {
+			t.Fatalf("symlink target = %q, want %q (stored verbatim)", target, "../../etc/passwd")
 		}
 	})
 
@@ -1160,12 +1321,48 @@ func TestUnTar_PathTraversal(t *testing.T) {
 				Uid: os.Getuid(), Gid: os.Getgid(),
 			},
 		)
-		// Extraction may or may not return an error; either way the file
-		// must not appear outside dest.
-		UnTar(buf, dest)
-
+		if _, err := UnTar(buf, dest); err != nil {
+			t.Fatalf("extraction should succeed (confined), got: %v", err)
+		}
+		// The file must not escape, and must land at the confined in-dest path.
 		if _, err := os.Stat(filepath.Join(outsideDir, "written.txt")); err == nil {
 			t.Fatal("file was written outside dest through symlink")
+		}
+		confined := filepath.Join(dest, outsideDir, "written.txt")
+		if _, err := os.Stat(confined); err != nil {
+			t.Fatalf("write was not confined to dest as expected (%s): %v", confined, err)
+		}
+	})
+
+	t.Run("write through deep relative escaping symlink is confined", func(t *testing.T) {
+		// The strongest version of the attack the removed lexical target check
+		// nominally guarded against: a deep relative symlink that escapes the
+		// root, followed by a write through it. The symlink is now created
+		// verbatim, but SecureJoin on the parent of the second entry clamps the
+		// ".." at the destination root, so the write stays inside dest.
+		outsideDir := t.TempDir() // sibling of dest, must remain untouched
+		marker := filepath.Join(outsideDir, "pwned.txt")
+		dest := t.TempDir()
+		buf := makeTar(t,
+			tar.Header{
+				Name: "evil", Typeflag: tar.TypeSymlink, Linkname: "../../../../../../../../../.." + outsideDir,
+			},
+			tar.Header{
+				Name: "evil/pwned.txt", Size: 5, Mode: 0o644, Typeflag: tar.TypeReg,
+				Uid: os.Getuid(), Gid: os.Getgid(),
+			},
+		)
+		if _, err := UnTar(buf, dest); err != nil {
+			t.Fatalf("extraction should succeed (confined), got: %v", err)
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatalf("file escaped to %s through deep relative symlink", marker)
+		}
+		// SecureJoin clamps the ".." at the dest root, so the write must land at
+		// the confined in-dest location rather than escaping.
+		confined := filepath.Join(dest, outsideDir, "pwned.txt")
+		if _, err := os.Stat(confined); err != nil {
+			t.Fatalf("write was not confined to dest as expected (%s): %v", confined, err)
 		}
 	})
 
