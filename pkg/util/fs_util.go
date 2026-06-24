@@ -322,13 +322,17 @@ func ExtractFile(dest string, hdr *tar.Header, cleanedName string, tr io.Reader)
 	// creating self-referential symlink loops (e.g. dash -> dash).
 	secureDir, err := securejoin.SecureJoin(dest, filepath.Dir(cleanedName))
 	if err != nil {
-		// During layer extraction, symlink chains may be incomplete,
-		// causing ELOOP. Fall back to the lexical path — the OS will
-		// encounter the same resolution failure if the path is used.
 		if !errors.Is(err, syscall.ELOOP) {
 			return fmt.Errorf("resolving path for %q: %w", hdr.Name, err)
 		}
-		secureDir = filepath.Join(dest, filepath.Dir(cleanedName))
+		// The parent path contains a symlink loop, so it cannot be securely
+		// resolved. Skip the entry rather than falling back to an unresolved
+		// lexical path: the OS could dereference an escaping symlink in that
+		// path and write outside dest (PSEC-1492). Skipping (vs erroring) mirrors
+		// the ignore-list skip below and keeps one pathological entry from
+		// aborting the whole image build, while staying fail-closed.
+		logrus.Warnf("Skipping %q: parent path cannot be securely resolved (symlink loop)", hdr.Name)
+		return nil
 	}
 	path := filepath.Join(secureDir, filepath.Base(cleanedName))
 	base := filepath.Base(path)
@@ -462,8 +466,9 @@ func ExtractFile(dest string, hdr *tar.Header, cleanedName string, tr io.Reader)
 		//     TypeSymlink branches delete the existing entry first, and the
 		//     TypeDir branch removes a pre-existing symlink before MkdirAll, so
 		//     the write never follows it outside dest.
-		// This does NOT hold on the ELOOP fallback above, which joins the parent
-		// lexically without resolving symlinks; see that branch.
+		// When a later entry's parent cannot be securely resolved (a symlink
+		// loop, ELOOP above), that entry is skipped rather than written through
+		// an unresolved lexical path, so it is never written outside dest.
 		// The base directory for a symlink may not exist before it is created.
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err

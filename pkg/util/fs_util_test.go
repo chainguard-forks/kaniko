@@ -1045,6 +1045,29 @@ func TestExtractFile_PathTraversal(t *testing.T) {
 		}
 	})
 
+	t.Run("entry whose parent is a symlink loop is skipped", func(t *testing.T) {
+		// SecureJoin returns ELOOP for a parent path containing a symlink loop.
+		// The entry must be skipped (returns nil, writes nothing) rather than
+		// written through an unresolved lexical path (PSEC-1492 ELOOP fallback).
+		dest := t.TempDir()
+		// Build a loop inside dest: a -> b, b -> a.
+		if err := ExtractFile(dest, linkHeader("./a", "b"), "a", bytes.NewReader(nil)); err != nil {
+			t.Fatalf("creating symlink a: %v", err)
+		}
+		if err := ExtractFile(dest, linkHeader("./b", "a"), "b", bytes.NewReader(nil)); err != nil {
+			t.Fatalf("creating symlink b: %v", err)
+		}
+		// An entry under the looping path must be skipped without error.
+		hdr := fileHeader("./a/foo.txt", "data", 0o644, defaultTestTime)
+		if err := ExtractFile(dest, hdr, filepath.Clean(hdr.Name), bytes.NewReader([]byte("data"))); err != nil {
+			t.Fatalf("entry under symlink loop should be skipped (nil), got: %v", err)
+		}
+		// Nothing should have been written under the looping parent.
+		if _, err := os.Lstat(filepath.Join(dest, "a", "foo.txt")); err == nil {
+			t.Fatal("file was written under a symlink-loop parent")
+		}
+	})
+
 	t.Run("symlink with excess-dotdot target (amazoncorretto cacerts) is allowed", func(t *testing.T) {
 		// Regression test for the #326/#330 symlink target check: a symlink
 		// deep in the tree whose target has more ".." than its depth resolves
