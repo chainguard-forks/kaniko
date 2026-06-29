@@ -1,0 +1,18 @@
+# Copyright 2026 Chainguard, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+# Zizmor configuration for kaniko.
+# CI runs zizmor with --pedantic; rules with no security value are disabled
+# to keep CI signal-to-noise high. See PSEC-923 for rationale.
+
+rules:
+  dependabot-cooldown:
+    config:
+      days: 3
+  # Pedantic-only; no security impact — cosmetic/style findings
+  anonymous-definition:
+    disable: true
+  # Pedantic-only; low security value but extremely noisy
+  # Address concurrency limits as a separate, dedicated effort if desired
+  concurrency-limits:
+    disable: true

@@ -5,6 +5,8 @@ updates:
     directory: /
     schedule:
       interval: daily
+    cooldown:
+      default-days: 3
     groups:
       gomod:
         update-types:
@@ -14,6 +16,8 @@ updates:
     directory: /
     schedule:
       interval: daily
+    cooldown:
+      default-days: 3
     groups:
       actions:
         update-types:
@@ -22,5 +26,7 @@ updates:
 
   - package-ecosystem: docker
     directory: /deploy
+    cooldown:
+      default-days: 3
     schedule:
       interval: daily
