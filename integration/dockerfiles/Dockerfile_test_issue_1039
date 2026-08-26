@@ -1,10 +1,19 @@
-FROM registry.access.redhat.com/ubi7/ubi:7.7-214
+# Regression test for https://github.com/GoogleContainerTools/kaniko/issues/1039:
+# a yum-based image whose install layer produces whiteout entries must build,
+# and must remain usable as a base for a further build.
+#
+# Originally based on ubi7/ubi:7.7-214. RHEL 7 is end of life and its repos no
+# longer resolve (subscription-manager now requires python-requests, which is
+# unavailable), so `yum update` fails at the reference `docker build` before
+# kaniko is even invoked. Moved to UBI 9, which keeps the yum/whiteout coverage
+# the test exists for.
+FROM registry.access.redhat.com/ubi9/ubi:9.8
 
 # Install GCC, GCC-C++ and make libraries for build environment
 # Then clean caches
 RUN yum --disableplugin=subscription-manager update -y \
     && yum --disableplugin=subscription-manager install -y \
-        gcc-4.8.5-39.el7 \
-        gcc-c++-4.8.5-39.el7 \
-        make-3.82-24.el7 \
+        gcc \
+        gcc-c++ \
+        make \
     && yum --disableplugin=subscription-manager clean all
