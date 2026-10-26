@@ -36,7 +36,7 @@ require (
 require (
 	github.com/GoogleCloudPlatform/docker-credential-gcr/v2 v2.1.32
 	github.com/containerd/containerd v1.7.36
-	github.com/cyphar/filepath-securejoin v0.6.1
+	github.com/cyphar/filepath-securejoin v0.7.0
 )
 
 require github.com/googleapis/enterprise-certificate-proxy v0.3.16 // indirect
