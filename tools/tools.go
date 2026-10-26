@@ -24,5 +24,4 @@ package tools
 import (
 	_ "github.com/GoogleCloudPlatform/docker-credential-gcr/v2"
 	_ "github.com/awslabs/amazon-ecr-credential-helper/ecr-login/cli/docker-credential-ecr-login"
-	_ "github.com/chrismellard/docker-credential-acr-env"
 )

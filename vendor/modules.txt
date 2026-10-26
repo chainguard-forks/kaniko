@@ -403,13 +403,6 @@ github.com/beorn7/perks/quantile
 # github.com/cespare/xxhash/v2 v2.3.0
 ## explicit; go 1.11
 github.com/cespare/xxhash/v2
-# github.com/chrismellard/docker-credential-acr-env v0.0.0-20230304212654-82a0ddb27589
-## explicit; go 1.18
-github.com/chrismellard/docker-credential-acr-env
-github.com/chrismellard/docker-credential-acr-env/cmd
-github.com/chrismellard/docker-credential-acr-env/pkg/credhelper
-github.com/chrismellard/docker-credential-acr-env/pkg/registry
-github.com/chrismellard/docker-credential-acr-env/pkg/token
 # github.com/cloudflare/circl v1.6.3
 ## explicit; go 1.22.0
 github.com/cloudflare/circl/dh/x25519
