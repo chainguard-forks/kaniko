@@ -101,13 +101,53 @@ func TestIsACRHelper(t *testing.T) {
 		// Chainguard: matching stays case-sensitive, as upstream was.
 		{"FOO.AZURECR.IO", false},
 		{"foo.AzureCR.io", false},
+		{"FOO.azurecr.io", false},
+
+		// Chainguard: MCR must match exactly, not as a suffix.
+		{"foo.mcr.microsoft.com", false},
+		{"evilmcr.microsoft.com", false},
+
+		// Chainguard: bracketed names. net/url only accepts an IPv6 address
+		// inside brackets (Go 1.24.8 and 1.25.2 onwards), so these fail to
+		// parse. With an older toolchain they parse, Hostname() strips the
+		// brackets, and the result matches acrHostRE; these rows catch that.
+		{"[foo.azurecr.io]", false},
+		{"[foo.azurecr.io]:443", false},
+		{"[mcr.microsoft.com]", false},
+
+		// Chainguard: IPv6 literals. These parse; the hostname check
+		// rejects them.
+		{"[::1]", false},
+		{"[::1]:443", false},
+		{"[fe80::1%25foo.azurecr.io]", false},
+
+		// Chainguard: whitespace, control characters, backslashes and
+		// scheme prefixes. url.Parse rejects most of these before
+		// isACRRegistry's own checks run.
+		{"foo.azurecr.io\n", false},
+		{"foo.azurecr.io\t", false},
+		{" foo.azurecr.io", false},
+		{"foo.azurecr.io\x00.attacker.com", false},
+		{"foo\\.azurecr.io", false},
+		{"foo.azurecr.io\\@attacker.com", false},
+		{"//foo.azurecr.io", false},
+		{"https://foo.azurecr.io", false},
+
+		// Chainguard: percent-encoded dots.
+		{"foo.azurecr.io%2eattacker.com", false},
+		{"foo.azurecr%2eio", false},
+
+		// Chainguard: label length and punycode.
+		{"a23456789012345678901234567890123456789012345678901234567890123.azurecr.io", true},   // 63-char label
+		{"a234567890123456789012345678901234567890123456789012345678901234.azurecr.io", false}, // 64-char label
+		{"xn--e1afmkfd.azurecr.io", true},
 
 		{"", false},
 	} {
 		t.Run(c.url, func(t *testing.T) {
 			got := isACRRegistry(c.url)
 			if got != c.want {
-				t.Fatalf("got %t, want %t", got, c.want)
+				t.Fatalf("isACRRegistry(%q) = %t, want %t", c.url, got, c.want)
 			}
 		})
 	}
