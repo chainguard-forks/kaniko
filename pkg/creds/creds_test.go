@@ -46,10 +46,10 @@ func isolateACRHelper(t *testing.T) {
 
 // TestGetKeychainUsesPatchedACRHelper fails if creds.go stops importing the
 // patched in-tree ACR helper (for example if it goes back to
-// github.com/chrismellard/docker-credential-acr-env). The wiring is checked
-// by reading creds.go's imports because a behavioural check through
-// GetKeychain cannot tell the helpers apart: authn.NewKeychainFromHelper turns
-// any helper error into Anonymous.
+// github.com/chrismellard/docker-credential-acr-env). It is a cheap check on
+// the wiring; TestGetKeychainRequestsAzureTokenOnlyForACRHosts checks the
+// behaviour through GetKeychain, and also catches an unpatched helper wired in
+// under a different import path.
 func TestGetKeychainUsesPatchedACRHelper(t *testing.T) {
 	f, err := parser.ParseFile(token.NewFileSet(), "creds.go", nil, parser.ImportsOnly)
 	if err != nil {
