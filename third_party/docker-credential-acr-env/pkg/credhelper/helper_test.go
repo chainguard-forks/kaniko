@@ -16,6 +16,8 @@ limitations under the License.
 package credhelper
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/docker/docker-credential-helpers/credentials"
@@ -153,22 +155,78 @@ func TestIsACRHelper(t *testing.T) {
 	}
 }
 
+// isolateAzure makes any attempt by the helper to get an Azure token fail
+// while it reads its settings, before it contacts Azure AD or the instance
+// metadata service. Without this, a helper that let a non-ACR host through
+// would fall back to the managed identity path and call IMDS. (Chainguard,
+// GO-2026-6225.)
+func isolateAzure(t *testing.T) {
+	t.Helper()
+	t.Setenv("AZURE_ENVIRONMENT", "kaniko-unit-test-no-such-cloud")
+	for _, v := range []string{
+		"AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID",
+		"AZURE_FEDERATED_TOKEN", "AZURE_FEDERATED_TOKEN_FILE",
+		"MSI_ENDPOINT", "MSI_SECRET",
+	} {
+		t.Setenv(v, "")
+	}
+}
+
 // TestGetRejectsNonACRHostsAsNotFound checks that Get fails fast with a
 // "credentials not found" error for non-ACR hosts, before any Azure token
-// is requested. (Chainguard, GO-2026-6225.)
+// is requested. The ACR row checks that a real ACR host gets past the host
+// check and fails later, so the other rows can't pass just because every
+// host fails. (Chainguard, GO-2026-6225.)
 func TestGetRejectsNonACRHostsAsNotFound(t *testing.T) {
-	for _, h := range []string{
-		"evil.azurecr.io.attacker.com",
-		"foo.azurecr.io.",
-		"foo.azurecr.io@attacker.com",
-		"index.docker.io",
+	isolateAzure(t)
+	for _, tc := range []struct {
+		name         string
+		serverURL    string
+		wantNotFound bool
+	}{
+		{"passes ACR registry to token request", "foo.azurecr.io", false},
+		{"rejects azurecr.io lookalike", "evil.azurecr.io.attacker.com", true},
+		{"rejects trailing dot", "foo.azurecr.io.", true},
+		{"rejects userinfo", "foo.azurecr.io@attacker.com", true},
+		{"rejects unrelated registry", "index.docker.io", true},
 	} {
-		u, p, err := NewACRCredentialsHelper().Get(h)
-		if !credentials.IsErrCredentialsNotFound(err) {
-			t.Errorf("Get(%q): err = %v, want credentials not found", h, err)
-		}
-		if u != "" || p != "" {
-			t.Errorf("Get(%q) returned credentials %q/%q, want none", h, u, p)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			u, p, err := NewACRCredentialsHelper().Get(tc.serverURL)
+			if u != "" || p != "" {
+				t.Fatalf("Get(%q) returned credentials %q/%q, want none", tc.serverURL, u, p)
+			}
+			if gotNotFound := credentials.IsErrCredentialsNotFound(err); gotNotFound != tc.wantNotFound {
+				t.Fatalf("Get(%q): err = %v; credentials not found = %t, want %t", tc.serverURL, err, gotNotFound, tc.wantNotFound)
+			}
+		})
+	}
+}
+
+// TestGetCommandRejectsNonACRHostsAsNotFound drives the helper the way the
+// standalone docker-credential-acr-env binary does: cmd/get.go passes stdin
+// to credentials.Serve, which trims the server URL and calls Get.
+// (Chainguard, GO-2026-6225.)
+func TestGetCommandRejectsNonACRHostsAsNotFound(t *testing.T) {
+	isolateAzure(t)
+	for _, tc := range []struct {
+		name         string
+		stdin        string
+		wantNotFound bool
+	}{
+		{"passes ACR registry to token request", "foo.azurecr.io\n", false},
+		{"rejects azurecr.io lookalike", "evil.azurecr.io.attacker.com\n", true},
+		{"rejects azurecr.io lookalike with surrounding spaces", "  evil.azurecr.io.attacker.com  \n", true},
+		{"rejects MCR lookalike", "mcr.microsoft.com.attacker.com\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			err := credentials.HandleCommand(NewACRCredentialsHelper(), credentials.ActionGet, strings.NewReader(tc.stdin), &out)
+			if gotNotFound := credentials.IsErrCredentialsNotFound(err); gotNotFound != tc.wantNotFound {
+				t.Fatalf("get with stdin %q: err = %v, stdout = %q; credentials not found = %t, want %t", tc.stdin, err, out.String(), gotNotFound, tc.wantNotFound)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("get with stdin %q wrote credentials %q, want none", tc.stdin, out.String())
+			}
+		})
 	}
 }
