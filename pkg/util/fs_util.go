@@ -443,6 +443,29 @@ func ExtractFile(dest string, hdr *tar.Header, cleanedName string, tr io.Reader)
 			logrus.Tracef("Skipping link from %s to %s because %s is ignored", hdr.Linkname, path, hdr.Linkname)
 			return nil
 		}
+		cleanedLink := filepath.Clean(hdr.Linkname)
+		if cleanedLink == ".." || strings.HasPrefix(cleanedLink, "../") {
+			return fmt.Errorf("hardlink target %q is not allowed: references parent directory", hdr.Linkname)
+		}
+		link, err := securejoin.SecureJoin(dest, hdr.Linkname)
+		if err != nil {
+			return fmt.Errorf("invalid hardlink target %q: %w", hdr.Linkname, err)
+		}
+		// The ignore-list check above sees Linkname as written, but SecureJoin
+		// follows symlinks, so a symlink extracted earlier can route the target
+		// into an ignored path such as /kaniko. Check the resolved target too.
+		// As with the entry's own path, an ignored dest (an image extracted
+		// into /kaniko/<name> for COPY --from) is exempt. Both checks and the
+		// resolution run before anything at path is removed, so a skipped or
+		// rejected link leaves the existing entry alone.
+		absLink, err := filepath.Abs(link)
+		if err != nil {
+			return err
+		}
+		if CheckCleanedPathAgainstIgnoreList(absLink) && !checkIgnoreListRoot(dest) {
+			logrus.Warnf("Skipping hardlink %s: its target %s resolves to ignored path %s", hdr.Name, hdr.Linkname, absLink)
+			return nil
+		}
 		// The base directory for a link may not exist before it is created.
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
@@ -453,14 +476,6 @@ func ExtractFile(dest string, hdr *tar.Header, cleanedName string, tr io.Reader)
 			if err := os.RemoveAll(path); err != nil {
 				return errors.Wrapf(err, "error removing %s to make way for new link", hdr.Name)
 			}
-		}
-		cleanedLink := filepath.Clean(hdr.Linkname)
-		if cleanedLink == ".." || strings.HasPrefix(cleanedLink, "../") {
-			return fmt.Errorf("hardlink target %q is not allowed: references parent directory", hdr.Linkname)
-		}
-		link, err := securejoin.SecureJoin(dest, hdr.Linkname)
-		if err != nil {
-			return fmt.Errorf("invalid hardlink target %q: %w", hdr.Linkname, err)
 		}
 		if err := os.Link(link, path); err != nil {
 			return err

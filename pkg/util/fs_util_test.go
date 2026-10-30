@@ -37,7 +37,27 @@ import (
 	"github.com/golang/mock/gomock"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/sirupsen/logrus"
 )
+
+// warnHook records the messages of warnings sent to the standard logger.
+type warnHook struct{ messages []string }
+
+func (h *warnHook) Levels() []logrus.Level { return []logrus.Level{logrus.WarnLevel} }
+
+func (h *warnHook) Fire(e *logrus.Entry) error {
+	h.messages = append(h.messages, e.Message)
+	return nil
+}
+
+// captureWarnings records warnings logged until the end of the test.
+func captureWarnings(t *testing.T) *warnHook {
+	t.Helper()
+	h := &warnHook{}
+	original := logrus.StandardLogger().ReplaceHooks(logrus.LevelHooks{logrus.WarnLevel: {h}})
+	t.Cleanup(func() { logrus.StandardLogger().ReplaceHooks(original) })
+	return h
+}
 
 func Test_DetectFilesystemSkiplist(t *testing.T) {
 	testDir := t.TempDir()
@@ -1132,6 +1152,286 @@ func TestExtractFile_PathTraversal(t *testing.T) {
 	})
 }
 
+// TestExtractFile_IgnoreListThroughSymlink checks that an entry is skipped
+// when its resolved location, not just its name, is in the ignore list. A
+// symlink extracted earlier can route a regular file's path, or a hardlink's
+// target, into an ignored directory such as /kaniko.
+func TestExtractFile_IgnoreListThroughSymlink(t *testing.T) {
+	tests := []struct {
+		name string
+		// destIgnored puts dest itself in the ignore list, as when
+		// COPY --from=<image> extracts the image into /kaniko/<name>.
+		// Otherwise dest/kaniko is ignored and dest plays the role of "/".
+		destIgnored bool
+		// prefixOnly registers dest/kaniko the way VOLUME paths are
+		// registered, matching only paths below it.
+		prefixOnly bool
+		// relativeDest passes dest to ExtractFile relative to the working
+		// directory.
+		relativeDest bool
+		// cwdRoot runs from "/" with dest not ignored, as when ADD extracts a
+		// local tarball into a directory below the root.
+		cwdRoot bool
+		// ignoredDir names the ignored directory below dest; the default is
+		// "kaniko". A row that runs from "/" needs another name, because
+		// "kaniko/..." resolves against "/" to the real, ignored /kaniko.
+		ignoredDir string
+		// symlink, if set, is extracted first as "escape -> symlink".
+		symlink string
+		hdr     *tar.Header
+		body    string
+		// path is where the entry would appear, relative to dest.
+		path string
+		// existing puts a file at path first, as a lower layer would. A
+		// skipped or rejected entry must leave it alone.
+		existing    bool
+		wantSkipped bool
+		wantErr     bool
+		// wantWarn is set where the check on the resolved target skips a
+		// hardlink, which logs a warning.
+		wantWarn bool
+	}{
+		{
+			name:        "regular file into ignored dir",
+			hdr:         fileHeader("kaniko/probe", "probe", 0o644, time.Unix(0, 0)),
+			body:        "probe",
+			path:        "kaniko/probe",
+			wantSkipped: true,
+		},
+		{
+			name:        "regular file through absolute symlink into ignored dir",
+			symlink:     "/kaniko",
+			hdr:         fileHeader("escape/probe", "probe", 0o644, time.Unix(0, 0)),
+			body:        "probe",
+			path:        "kaniko/probe",
+			wantSkipped: true,
+		},
+		{
+			name:        "hardlink to ignored file",
+			hdr:         hardlinkHeader("probe", "kaniko/secret"),
+			path:        "probe",
+			wantSkipped: true,
+		},
+		{
+			name:        "hardlink through absolute symlink to ignored file",
+			wantWarn:    true,
+			symlink:     "/kaniko",
+			hdr:         hardlinkHeader("probe", "escape/secret"),
+			path:        "probe",
+			wantSkipped: true,
+		},
+		{
+			name:        "hardlink through relative symlink to ignored file",
+			wantWarn:    true,
+			symlink:     "kaniko",
+			hdr:         hardlinkHeader("probe", "escape/secret"),
+			path:        "probe",
+			wantSkipped: true,
+		},
+		{
+			name:        "hardlink whose target is an absolute symlink to ignored file",
+			wantWarn:    true,
+			symlink:     "/kaniko/secret",
+			hdr:         hardlinkHeader("probe", "escape"),
+			path:        "probe",
+			wantSkipped: true,
+		},
+		{
+			name:        "hardlink whose target is a relative symlink to ignored file",
+			wantWarn:    true,
+			symlink:     "kaniko/secret",
+			hdr:         hardlinkHeader("probe", "escape"),
+			path:        "probe",
+			wantSkipped: true,
+		},
+		{
+			name:        "hardlink through symlink to file under prefix-only entry",
+			wantWarn:    true,
+			prefixOnly:  true,
+			symlink:     "/kaniko",
+			hdr:         hardlinkHeader("probe", "escape/secret"),
+			path:        "probe",
+			wantSkipped: true,
+		},
+		{
+			name:        "direct hardlink into volume below non-root dest",
+			wantWarn:    true,
+			cwdRoot:     true,
+			prefixOnly:  true,
+			ignoredDir:  "data",
+			hdr:         hardlinkHeader("probe", "data/secret"),
+			path:        "probe",
+			wantSkipped: true,
+		},
+		{
+			name:         "hardlink through symlink to ignored file with relative dest",
+			wantWarn:     true,
+			relativeDest: true,
+			symlink:      "/kaniko",
+			hdr:          hardlinkHeader("probe", "escape/secret"),
+			path:         "probe",
+			wantSkipped:  true,
+		},
+		{
+			name:        "skipped direct hardlink keeps existing file at its path",
+			hdr:         hardlinkHeader("probe", "kaniko/secret"),
+			path:        "probe",
+			existing:    true,
+			wantSkipped: true,
+		},
+		{
+			name:        "skipped hardlink through symlink keeps existing file at its path",
+			wantWarn:    true,
+			symlink:     "/kaniko",
+			hdr:         hardlinkHeader("probe", "escape/secret"),
+			path:        "probe",
+			existing:    true,
+			wantSkipped: true,
+		},
+		{
+			name:     "rejected dotdot hardlink keeps existing file at its path",
+			hdr:      hardlinkHeader("probe", "../outside"),
+			path:     "probe",
+			existing: true,
+			wantErr:  true,
+		},
+		{
+			name: "hardlink to file outside ignored dir is created",
+			hdr:  hardlinkHeader("probe", "target"),
+			path: "probe",
+		},
+		{
+			// The target is resolved before the symlink at the link's path
+			// is removed to make way for the link.
+			name:    "hardlink through a symlink at its own path links the resolved target",
+			symlink: "/",
+			hdr:     hardlinkHeader("escape", "escape/target"),
+			path:    "escape",
+		},
+		{
+			name:     "hardlink replaces existing file at its path",
+			hdr:      hardlinkHeader("probe", "target"),
+			path:     "probe",
+			existing: true,
+		},
+		{
+			name:        "regular file in ignored dest is created",
+			destIgnored: true,
+			hdr:         fileHeader("probe", "probe", 0o644, time.Unix(0, 0)),
+			body:        "probe",
+			path:        "probe",
+		},
+		{
+			name:        "hardlink in ignored dest is created",
+			destIgnored: true,
+			hdr:         hardlinkHeader("probe", "target"),
+			path:        "probe",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dest := t.TempDir()
+			// Start from the defaults: other tests leave entries behind, and on
+			// a host where the temp dir is a mount, one of those can cover dest.
+			original := ignorelist
+			t.Cleanup(func() { ignorelist = original })
+			ignorelist = append([]IgnoreListEntry{}, defaultIgnoreList...)
+			// The executor chdirs to "/" before extracting. The hardlink branch
+			// passes Linkname to filepath.Abs, so the working directory decides
+			// what it checks: dest when dest plays "/", and "/" otherwise.
+			ignored := filepath.Join(dest, "kaniko")
+			if tc.ignoredDir != "" {
+				ignored = filepath.Join(dest, tc.ignoredDir)
+			}
+			switch {
+			case tc.destIgnored:
+				t.Chdir("/")
+				AddToIgnoreList(IgnoreListEntry{Path: dest})
+			case tc.relativeDest:
+				t.Chdir(filepath.Dir(dest))
+				AddToIgnoreList(IgnoreListEntry{Path: ignored})
+			case tc.cwdRoot:
+				t.Chdir("/")
+				AddToIgnoreList(IgnoreListEntry{Path: ignored, PrefixMatchOnly: tc.prefixOnly})
+			default:
+				t.Chdir(dest)
+				AddToIgnoreList(IgnoreListEntry{Path: ignored, PrefixMatchOnly: tc.prefixOnly})
+			}
+			extractDest := dest
+			if tc.relativeDest {
+				extractDest = filepath.Base(dest)
+			}
+
+			// The ignored dir exists in the build container, not the image.
+			if err := os.MkdirAll(ignored, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(ignored, "secret"), []byte("secret"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dest, "target"), []byte("target"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			const lower = "lower layer"
+			if tc.existing {
+				if err := os.WriteFile(filepath.Join(dest, tc.path), []byte(lower), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.symlink != "" {
+				sym := linkHeader("escape", tc.symlink)
+				if err := ExtractFile(extractDest, sym, sym.Name, bytes.NewReader(nil)); err != nil {
+					t.Fatalf("extracting escape -> %q: %v", tc.symlink, err)
+				}
+			}
+
+			warnings := captureWarnings(t)
+			err := ExtractFile(extractDest, tc.hdr, filepath.Clean(tc.hdr.Name), bytes.NewReader([]byte(tc.body)))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("entry %q (linkname %q, after escape -> %q): want error=%v, got %v",
+					tc.hdr.Name, tc.hdr.Linkname, tc.symlink, tc.wantErr, err)
+			}
+			var skipWarnings []string
+			for _, m := range warnings.messages {
+				if strings.HasPrefix(m, "Skipping hardlink") {
+					skipWarnings = append(skipWarnings, m)
+				}
+			}
+			wantWarnings := 0
+			if tc.wantWarn {
+				wantWarnings = 1
+			}
+			if len(skipWarnings) != wantWarnings {
+				t.Fatalf("entry %q (linkname %q, after escape -> %q): want %d skip warning(s), got %q",
+					tc.hdr.Name, tc.hdr.Linkname, tc.symlink, wantWarnings, skipWarnings)
+			}
+			if tc.wantWarn && !strings.Contains(skipWarnings[0], tc.hdr.Linkname) {
+				t.Fatalf("entry %q: want the skip warning to name target %q, got %q", tc.hdr.Name, tc.hdr.Linkname, skipWarnings[0])
+			}
+			got, readErr := os.ReadFile(filepath.Join(dest, tc.path))
+			if tc.wantSkipped || tc.wantErr {
+				if tc.existing && string(got) != lower {
+					t.Fatalf("entry %q (linkname %q, after escape -> %q): want existing %s left as %q, got %q (read err=%v)",
+						tc.hdr.Name, tc.hdr.Linkname, tc.symlink, tc.path, lower, got, readErr)
+				}
+				if !tc.existing && readErr == nil {
+					t.Fatalf("entry %q (linkname %q, after escape -> %q, destIgnored=%v, prefixOnly=%v, relativeDest=%v): want skipped, but %s was created with %q",
+						tc.hdr.Name, tc.hdr.Linkname, tc.symlink, tc.destIgnored, tc.prefixOnly, tc.relativeDest, tc.path, got)
+				}
+				return
+			}
+			want := tc.body
+			if tc.hdr.Typeflag == tar.TypeLink {
+				want = "target"
+			}
+			if readErr != nil || string(got) != want {
+				t.Fatalf("entry %q (linkname %q, destIgnored=%v): want %s created with %q, got %q (read err=%v)",
+					tc.hdr.Name, tc.hdr.Linkname, tc.destIgnored, tc.path, want, got, readErr)
+			}
+		})
+	}
+}
+
 func TestExtractFile_SymlinkOverwrite(t *testing.T) {
 	// Regression test: when a tar layer overwrites an existing symlink
 	// (e.g. usr/bin/sh -> dash), SecureJoin must not follow the existing
@@ -1977,6 +2277,96 @@ func Test_GetFSFromLayers_through_symlink(t *testing.T) {
 				if b, err := os.ReadFile(filepath.Join(outside, name)); err != nil || string(b) != body {
 					t.Errorf("outside root: want %q at %s unchanged, got %q (err=%v)", body, name, b, err)
 				}
+			}
+		})
+	}
+}
+
+// Test_GetFSFromLayers_hardlink_into_mount checks that a hardlink in a layer
+// can't link to a file under a mount point, which GetFSFromLayers adds to the
+// ignore list from mountinfo, however the hardlink's target reaches it.
+func Test_GetFSFromLayers_hardlink_into_mount(t *testing.T) {
+	tests := []struct {
+		name        string
+		entries     []*tar.Header
+		wantSkipped bool
+	}{
+		{
+			name:        "through absolute symlink",
+			entries:     []*tar.Header{linkHeader("escape", "/mnt"), hardlinkHeader("probe", "escape/secret")},
+			wantSkipped: true,
+		},
+		{
+			name:        "through relative symlink",
+			entries:     []*tar.Header{linkHeader("escape", "mnt"), hardlinkHeader("probe", "escape/secret")},
+			wantSkipped: true,
+		},
+		{
+			name:        "target is a symlink to the file",
+			entries:     []*tar.Header{linkHeader("escape", "/mnt/secret"), hardlinkHeader("probe", "escape")},
+			wantSkipped: true,
+		},
+		{
+			// The working directory is the package directory, not root, so
+			// the check on Linkname as written doesn't see the mount.
+			name:        "direct, with working directory not root",
+			entries:     []*tar.Header{hardlinkHeader("probe", "mnt/secret")},
+			wantSkipped: true,
+		},
+		{
+			name:    "to file outside the mount",
+			entries: []*tar.Header{hardlinkHeader("probe", "target")},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			root := t.TempDir()
+			original := ignorelist
+			t.Cleanup(func() { ignorelist = original })
+
+			mountinfo := filepath.Join(t.TempDir(), "mountinfo")
+			line := fmt.Sprintf("36 35 98:0 /x %s rw,noatime master:1 - ext3 /dev/root rw\n", filepath.Join(root, "mnt"))
+			if err := os.WriteFile(mountinfo, []byte(line), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			config.MountInfoPath = mountinfo
+			t.Cleanup(func() { config.MountInfoPath = constants.MountInfoPath })
+
+			if err := os.MkdirAll(filepath.Join(root, "mnt"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "mnt", "secret"), []byte("secret"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "target"), []byte("target"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			buf := new(bytes.Buffer)
+			tw := tar.NewWriter(buf)
+			for _, h := range tc.entries {
+				if err := tw.WriteHeader(h); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := tw.Close(); err != nil {
+				t.Fatal(err)
+			}
+			l := mockv1.NewMockLayer(ctrl)
+			l.EXPECT().MediaType().Return(types.OCILayer, nil)
+			l.EXPECT().Uncompressed().Return(io.NopCloser(buf), nil)
+
+			if _, err := GetFSFromLayers(root, []v1.Layer{l}, ExtractFunc(ExtractFile)); err != nil {
+				t.Fatalf("GetFSFromLayers: %v (ignore list %v)", err, ignorelist)
+			}
+			got, err := os.ReadFile(filepath.Join(root, "probe"))
+			created := err == nil
+			if created == tc.wantSkipped {
+				t.Fatalf("want skipped=%v, got created=%v with %q (ignore list %v)", tc.wantSkipped, created, got, ignorelist)
+			}
+			if created && string(got) != "target" {
+				t.Fatalf("want probe linked to target, got %q", got)
 			}
 		})
 	}
