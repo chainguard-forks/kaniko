@@ -918,11 +918,19 @@ func TestExtractFile_PathTraversal(t *testing.T) {
 
 		// Try to write a file through the symlink.
 		writeHdr := fileHeader("./extlink/written.txt", "data", 0o644, defaultTestTime)
-		_ = ExtractFile(dest, writeHdr, filepath.Clean(writeHdr.Name), bytes.NewReader([]byte("data")))
+		if err := ExtractFile(dest, writeHdr, filepath.Clean(writeHdr.Name), bytes.NewReader([]byte("data"))); err != nil {
+			t.Fatalf("write through symlink should succeed (confined), got: %v", err)
+		}
 
 		// The file must not appear outside dest.
 		if _, statErr := os.Stat(filepath.Join(outsideDir, "written.txt")); statErr == nil {
 			t.Fatal("file was written outside dest through symlink")
+		}
+		// SecureJoin resolves the absolute target relative to dest, so the
+		// file lands at dest/<outsideDir>/written.txt.
+		confined := filepath.Join(dest, outsideDir, "written.txt")
+		if got, err := os.ReadFile(confined); err != nil || string(got) != "data" {
+			t.Fatalf("want %q at %s, got %q (err=%v)", "data", confined, got, err)
 		}
 	})
 
@@ -1782,6 +1790,195 @@ func Test_GetFSFromLayers_with_whiteouts_include_whiteout_disabled(t *testing.T)
 	_, err = os.Lstat(filepath.Join(root, "foobar"))
 	if err == nil || !os.IsNotExist(err) {
 		t.Errorf("expected whiteout foobar file to be deleted. However found it.")
+	}
+}
+
+// Test_GetFSFromLayers_through_symlink pins where a base-image entry written
+// through a symlink lands. Each entry's parent is resolved with SecureJoin, so
+// a symlink target is interpreted relative to root whether it is absolute or
+// relative: "escape -> /etc" followed by "escape/marker" lands at
+// root/etc/marker, where a plain "etc/marker" entry would. containerd and
+// BuildKit put it in the same place.
+func Test_GetFSFromLayers_through_symlink(t *testing.T) {
+	resetMountInfoFile := provideEmptyMountinfoFile()
+	defer resetMountInfoFile()
+
+	type entry struct {
+		hdr  *tar.Header
+		body string
+	}
+	dir := func(name string) entry { return entry{hdr: dirHeader(name, 0o755)} }
+	file := func(name, body string) entry {
+		return entry{hdr: fileHeader(name, body, 0o644, time.Unix(0, 0)), body: body}
+	}
+	symlink := func(name, target string) entry { return entry{hdr: linkHeader(name, target)} }
+
+	const marker = "planted-via-symlink\n"
+	const passwd = "root:x:0:0:root:/root:/bin/sh\n"
+	tests := []struct {
+		name string
+		// outsideFiles are created in a directory beside root before
+		// extraction, and must be its only contents, unchanged, afterwards.
+		outsideFiles map[string]string
+		// layers are given the outside directory's path.
+		layers func(outside string) [][]entry
+		// wantFiles and wantGone are paths relative to root. In wantFiles,
+		// $OUTSIDE stands for the outside directory's path.
+		wantFiles map[string]string
+		wantGone  []string
+		wantErr   bool
+	}{
+		{
+			name: "reporter PoC lands at root/etc/marker",
+			layers: func(string) [][]entry {
+				return [][]entry{{dir("usr/"), dir("usr/bin/"), symlink("escape", "/etc"), file("escape/marker", marker)}}
+			},
+			wantFiles: map[string]string{"etc/marker": marker},
+		},
+		{
+			name: "symlink and write in separate layers",
+			layers: func(string) [][]entry {
+				return [][]entry{{symlink("escape", "/etc")}, {file("escape/marker", marker)}}
+			},
+			wantFiles: map[string]string{"etc/marker": marker},
+		},
+		{
+			name: "root target",
+			layers: func(string) [][]entry {
+				return [][]entry{{symlink("escape", "/"), file("escape/marker", marker)}}
+			},
+			wantFiles: map[string]string{"marker": marker},
+		},
+		{
+			name: "doubled leading slash",
+			layers: func(string) [][]entry {
+				return [][]entry{{symlink("escape", "//etc"), file("escape/marker", marker)}}
+			},
+			wantFiles: map[string]string{"etc/marker": marker},
+		},
+		{
+			name: "dotdot above root",
+			layers: func(string) [][]entry {
+				return [][]entry{{symlink("escape", "/../etc"), file("escape/marker", marker)}}
+			},
+			wantFiles: map[string]string{"etc/marker": marker},
+		},
+		{
+			name: "relative target escaping root",
+			layers: func(string) [][]entry {
+				return [][]entry{{symlink("escape", "../../../../etc"), file("escape/marker", marker)}}
+			},
+			wantFiles: map[string]string{"etc/marker": marker},
+		},
+		{
+			// root has no proc, so the components are created as directories.
+			name: "proc self root target",
+			layers: func(string) [][]entry {
+				return [][]entry{{symlink("escape", "/proc/self/root/etc"), file("escape/marker", marker)}}
+			},
+			wantFiles: map[string]string{"proc/self/root/etc/marker": marker},
+		},
+		{
+			name: "absolute target that exists outside root",
+			layers: func(outside string) [][]entry {
+				return [][]entry{{symlink("escape", outside), file("escape/marker", marker)}}
+			},
+			wantFiles: map[string]string{"$OUTSIDE/marker": marker},
+		},
+		{
+			name: "file target fails the write and leaves the file alone",
+			layers: func(string) [][]entry {
+				return [][]entry{{dir("etc/"), file("etc/passwd", passwd), symlink("escape", "/etc/passwd"), file("escape/marker", marker)}}
+			},
+			wantFiles: map[string]string{"etc/passwd": passwd},
+			wantErr:   true,
+		},
+		{
+			name: "whiteout through absolute symlink deletes inside root",
+			layers: func(string) [][]entry {
+				return [][]entry{{dir("etc/"), file("etc/keep", "keep\n")}, {symlink("escape", "/etc"), file("escape/.wh.keep", "")}}
+			},
+			wantGone: []string{"etc/keep"},
+		},
+		{
+			name:         "whiteout through absolute symlink outside root deletes nothing outside",
+			outsideFiles: map[string]string{"keep": "keep\n"},
+			layers: func(outside string) [][]entry {
+				return [][]entry{{symlink("escape", outside), file("escape/.wh.keep", "")}}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			root := t.TempDir()
+			outside := t.TempDir()
+			for name, body := range tc.outsideFiles {
+				if err := os.WriteFile(filepath.Join(outside, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var layers []v1.Layer
+			for _, entries := range tc.layers(outside) {
+				buf := new(bytes.Buffer)
+				tw := tar.NewWriter(buf)
+				for _, e := range entries {
+					if err := tw.WriteHeader(e.hdr); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := tw.Write([]byte(e.body)); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := tw.Close(); err != nil {
+					t.Fatal(err)
+				}
+				l := mockv1.NewMockLayer(ctrl)
+				l.EXPECT().MediaType().Return(types.OCILayer, nil)
+				l.EXPECT().Uncompressed().Return(io.NopCloser(buf), nil)
+				layers = append(layers, l)
+			}
+
+			// files lists everything under root, for failure messages.
+			files := func() []string {
+				var found []string
+				_ = filepath.Walk(root, func(p string, _ os.FileInfo, _ error) error {
+					rel, _ := filepath.Rel(root, p)
+					found = append(found, rel)
+					return nil
+				})
+				return found
+			}
+
+			_, err := GetFSFromLayers(root, layers, ExtractFunc(ExtractFile))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("want err=%v, got %v; files under root: %v", tc.wantErr, err, files())
+			}
+			for rel, body := range tc.wantFiles {
+				rel = strings.ReplaceAll(rel, "$OUTSIDE", outside)
+				got, err := os.ReadFile(filepath.Join(root, rel))
+				if err != nil || string(got) != body {
+					t.Errorf("want %q at <root>/%s, got %q (err=%v); files under root: %v", body, rel, got, err, files())
+				}
+			}
+			for _, rel := range tc.wantGone {
+				if _, err := os.Lstat(filepath.Join(root, rel)); err == nil {
+					t.Errorf("want <root>/%s deleted, but it exists", rel)
+				}
+			}
+			got, err := os.ReadDir(outside)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != len(tc.outsideFiles) {
+				t.Errorf("outside root: want only %v, got %v", tc.outsideFiles, got)
+			}
+			for name, body := range tc.outsideFiles {
+				if b, err := os.ReadFile(filepath.Join(outside, name)); err != nil || string(b) != body {
+					t.Errorf("outside root: want %q at %s unchanged, got %q (err=%v)", body, name, b, err)
+				}
+			}
+		})
 	}
 }
 
