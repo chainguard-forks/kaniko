@@ -109,35 +109,31 @@ func TestIsACRHelper(t *testing.T) {
 		{"foo.mcr.microsoft.com", false},
 		{"evilmcr.microsoft.com", false},
 
-		// Chainguard: bracketed names. net/url only accepts an IPv6 address
-		// inside brackets (Go 1.24.8 and 1.25.2 onwards), so these fail to
-		// parse. With an older toolchain they parse, Hostname() strips the
-		// brackets, and the result matches acrHostRE; these rows catch that.
+		// Chainguard: bracketed names. These document net/url behaviour, not
+		// a check in isACRRegistry, which has no bracket handling of its own:
+		// url.Parse only accepts an IPv6 address inside brackets, so these
+		// fail to parse. On a Go release older than 1.24.8 or 1.25.2 they
+		// would parse, Hostname() would strip the brackets, and the result
+		// would match acrHostRE; go.mod's Go version rules those out.
 		{"[foo.azurecr.io]", false},
 		{"[foo.azurecr.io]:443", false},
 		{"[mcr.microsoft.com]", false},
 
-		// Chainguard: IPv6 literals. These parse; the hostname check
-		// rejects them.
-		{"[::1]", false},
-		{"[::1]:443", false},
-		{"[fe80::1%25foo.azurecr.io]", false},
+		// Chainguard: IPv6 literals. Each is rejected by a different check.
+		{"[::1]", false},                      // port check: the last ':' is inside the literal, so the port is "1]"
+		{"[::1]:443", false},                  // acrHostRE
+		{"[fe80::1%25foo.azurecr.io]", false}, // Host == input: url.Parse unescapes the %25 zone marker
 
-		// Chainguard: whitespace, control characters, backslashes and
-		// scheme prefixes. url.Parse rejects most of these before
-		// isACRRegistry's own checks run.
-		{"foo.azurecr.io\n", false},
-		{"foo.azurecr.io\t", false},
-		{" foo.azurecr.io", false},
-		{"foo.azurecr.io\x00.attacker.com", false},
-		{"foo\\.azurecr.io", false},
-		{"foo.azurecr.io\\@attacker.com", false},
-		{"//foo.azurecr.io", false},
-		{"https://foo.azurecr.io", false},
-
-		// Chainguard: percent-encoded dots.
-		{"foo.azurecr.io%2eattacker.com", false},
-		{"foo.azurecr%2eio", false},
+		// Chainguard: one input per class that url.Parse, or the
+		// Host == input comparison, rejects before isACRRegistry's own
+		// checks run. They document that these inputs fail, but no single
+		// change to isACRRegistry flips them.
+		{"foo.azurecr.io\n", false},                // control character
+		{" foo.azurecr.io", false},                 // leading space
+		{"foo.azurecr.io\x00.attacker.com", false}, // NUL
+		{"foo.azurecr.io\\@attacker.com", false},   // backslash
+		{"https://foo.azurecr.io", false},          // scheme prefix
+		{"foo.azurecr.io%2eattacker.com", false},   // percent-encoded dot
 
 		// Chainguard: label length and punycode.
 		{"a23456789012345678901234567890123456789012345678901234567890123.azurecr.io", true},   // 63-char label
@@ -156,77 +152,95 @@ func TestIsACRHelper(t *testing.T) {
 }
 
 // isolateAzure makes any attempt by the helper to get an Azure token fail
-// while it reads its settings, before it contacts Azure AD or the instance
-// metadata service. Without this, a helper that let a non-ACR host through
-// would fall back to the managed identity path and call IMDS. (Chainguard,
-// GO-2026-6225.)
+// while it reads its settings, before it chooses an auth method or contacts
+// Azure AD or the instance metadata service. go-autorest rejects the unknown
+// AZURE_ENVIRONMENT, so this one variable is the whole guard; the
+// "passes ACR registry" rows below check that it still fails at that stage.
+// (Chainguard, GO-2026-6225.)
 func isolateAzure(t *testing.T) {
 	t.Helper()
 	t.Setenv("AZURE_ENVIRONMENT", "kaniko-unit-test-no-such-cloud")
-	for _, v := range []string{
-		"AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID",
-		"AZURE_FEDERATED_TOKEN", "AZURE_FEDERATED_TOKEN_FILE",
-		"MSI_ENDPOINT", "MSI_SECRET",
-	} {
-		t.Setenv(v, "")
+}
+
+// settingsErr is part of the error Get returns when isolateAzure's unknown
+// AZURE_ENVIRONMENT stops it reading its Azure settings (pkg/token/token.go).
+const settingsErr = "failed to get auth settings from environment"
+
+// getCases drives both Get tests below. A real ACR host must get past the
+// host check and fail at the settings stage, so the "not found" rows can't
+// pass just because every host fails. (Chainguard, GO-2026-6225.)
+var getCases = []struct {
+	name         string
+	serverURL    string
+	wantNotFound bool
+}{
+	{"passes ACR registry to token request", "foo.azurecr.io", false},
+	{"rejects azurecr.io lookalike", "evil.azurecr.io.attacker.com", true},
+	{"rejects MCR lookalike", "mcr.microsoft.com.attacker.com", true},
+	{"rejects trailing dot", "foo.azurecr.io.", true},
+	{"rejects userinfo", "foo.azurecr.io@attacker.com", true},
+	{"rejects unrelated registry", "index.docker.io", true},
+}
+
+// checkGetErr fails t unless err is what a "credentials not found" row or a
+// "passes ACR registry" row should produce. Not-found rows must carry the
+// exact message docker-credential-helpers' client matches when it reads the
+// helper's stdout (IsErrCredentialsNotFoundMessage), not just the Go type:
+// a wrapped not-found error keeps the type but changes the text, and then
+// every non-ACR lookup through the binary as a global credsStore fails.
+func checkGetErr(t *testing.T, input string, err error, wantNotFound bool) {
+	t.Helper()
+	if wantNotFound {
+		if err == nil || !credentials.IsErrCredentialsNotFound(err) || !credentials.IsErrCredentialsNotFoundMessage(err.Error()) {
+			t.Fatalf("%q: err = %v, want the exact credentials-not-found error", input, err)
+		}
+		return
+	}
+	if err == nil || !strings.Contains(err.Error(), settingsErr) {
+		t.Fatalf("%q: err = %v, want an error containing %q", input, err, settingsErr)
 	}
 }
 
 // TestGetRejectsNonACRHostsAsNotFound checks that Get fails fast with a
 // "credentials not found" error for non-ACR hosts, before any Azure token
-// is requested. The ACR row checks that a real ACR host gets past the host
-// check and fails later, so the other rows can't pass just because every
-// host fails. (Chainguard, GO-2026-6225.)
+// is requested. (Chainguard, GO-2026-6225.)
 func TestGetRejectsNonACRHostsAsNotFound(t *testing.T) {
 	isolateAzure(t)
-	for _, tc := range []struct {
-		name         string
-		serverURL    string
-		wantNotFound bool
-	}{
-		{"passes ACR registry to token request", "foo.azurecr.io", false},
-		{"rejects azurecr.io lookalike", "evil.azurecr.io.attacker.com", true},
-		{"rejects trailing dot", "foo.azurecr.io.", true},
-		{"rejects userinfo", "foo.azurecr.io@attacker.com", true},
-		{"rejects unrelated registry", "index.docker.io", true},
-	} {
+	for _, tc := range getCases {
 		t.Run(tc.name, func(t *testing.T) {
 			u, p, err := NewACRCredentialsHelper().Get(tc.serverURL)
 			if u != "" || p != "" {
 				t.Fatalf("Get(%q) returned credentials %q/%q, want none", tc.serverURL, u, p)
 			}
-			if gotNotFound := credentials.IsErrCredentialsNotFound(err); gotNotFound != tc.wantNotFound {
-				t.Fatalf("Get(%q): err = %v; credentials not found = %t, want %t", tc.serverURL, err, gotNotFound, tc.wantNotFound)
-			}
+			checkGetErr(t, tc.serverURL, err, tc.wantNotFound)
 		})
 	}
 }
 
 // TestGetCommandRejectsNonACRHostsAsNotFound drives the helper the way the
 // standalone docker-credential-acr-env binary does: cmd/get.go passes stdin
-// to credentials.Serve, which trims the server URL and calls Get.
+// to credentials.Serve, which trims the server URL and calls Get. It runs
+// getCases as stdin lines, plus a padded row only the command path can see.
 // (Chainguard, GO-2026-6225.)
 func TestGetCommandRejectsNonACRHostsAsNotFound(t *testing.T) {
 	isolateAzure(t)
-	for _, tc := range []struct {
+	type row struct {
 		name         string
 		stdin        string
 		wantNotFound bool
-	}{
-		{"passes ACR registry to token request", "foo.azurecr.io\n", false},
-		{"rejects azurecr.io lookalike", "evil.azurecr.io.attacker.com\n", true},
-		{"rejects azurecr.io lookalike with surrounding spaces", "  evil.azurecr.io.attacker.com  \n", true},
-		{"rejects MCR lookalike", "mcr.microsoft.com.attacker.com\n", true},
-	} {
+	}
+	rows := []row{{"rejects azurecr.io lookalike with surrounding spaces", "  evil.azurecr.io.attacker.com  \n", true}}
+	for _, tc := range getCases {
+		rows = append(rows, row{tc.name, tc.serverURL + "\n", tc.wantNotFound})
+	}
+	for _, tc := range rows {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
 			err := credentials.HandleCommand(NewACRCredentialsHelper(), credentials.ActionGet, strings.NewReader(tc.stdin), &out)
-			if gotNotFound := credentials.IsErrCredentialsNotFound(err); gotNotFound != tc.wantNotFound {
-				t.Fatalf("get with stdin %q: err = %v, stdout = %q; credentials not found = %t, want %t", tc.stdin, err, out.String(), gotNotFound, tc.wantNotFound)
-			}
 			if out.Len() != 0 {
 				t.Fatalf("get with stdin %q wrote credentials %q, want none", tc.stdin, out.String())
 			}
+			checkGetErr(t, tc.stdin, err, tc.wantNotFound)
 		})
 	}
 }
