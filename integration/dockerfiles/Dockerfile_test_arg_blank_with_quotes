@@ -3,7 +3,13 @@ ARG FILE_NAME=""
 FROM busybox:latest AS builder
 ARG FILE_NAME
 
-RUN echo $FILE_NAME && touch /$FILE_NAME.txt && stat /$FILE_NAME.txt;
+# Give the builder-stage file content so the COPY --from below always changes
+# the filesystem. With an empty file in both stages the legacy docker builder
+# emits no layer for the COPY whenever both touches land in the same second
+# (its change detection treats mtimes in the same second as equal once one of
+# them has lost its sub-second part), while kaniko always emits one, so the
+# layer count compared by TestLayers depended on timing.
+RUN echo $FILE_NAME && echo builder > /$FILE_NAME.txt && stat /$FILE_NAME.txt;
 
 FROM busybox:latest
 ARG FILE_NAME
