@@ -16,11 +16,25 @@
 set -ex
 
 export INSTALL_K3S_EXEC="--write-kubeconfig-mode=0644"
+# Pin the k3s release. With INSTALL_K3S_VERSION set the installer downloads
+# straight from GitHub releases and never asks update.k3s.io to resolve a
+# channel; that lookup took every integration job down on 2026-11-02 when
+# update.k3s.io was unreachable. Override INSTALL_K3S_VERSION to test another
+# release.
+export INSTALL_K3S_VERSION="${INSTALL_K3S_VERSION:-v1.36.5+k3s1}"
 # Sometimes there is a residual kubeconfig, export and set this explicitly
 mkdir -p "${HOME}/.kube"
 export K3S_KUBECONFIG_OUTPUT="${HOME}/.kube/config"
 export KUBECONFIG="${HOME}/.kube/config"
-curl -sfL https://get.k3s.io | sh -
+install_k3s() {
+    curl -sfL -o /tmp/k3s-install.sh https://get.k3s.io && sh /tmp/k3s-install.sh
+}
+# One retry covers a transient download failure. If k3s still fails to
+# start, the journal is the only place the cause is recorded, so dump it.
+if ! install_k3s; then
+    sleep 15
+    install_k3s || { sudo journalctl -u k3s --no-pager | tail -n 50 || true; exit 1; }
+fi
 export SCRIPT_PATH="$(realpath $(dirname $0))"
 timeout 5m bash -c 'until kubectl cluster-info 2>/dev/null | grep "CoreDNS" >/dev/null; do sleep 1; done'
 # Install local registry and have it listen on localhost:5000
