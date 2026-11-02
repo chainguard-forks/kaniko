@@ -17,14 +17,13 @@ limitations under the License.
 package creds
 
 import (
+	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 
@@ -32,30 +31,47 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 )
 
-// fakeAzureResourceManager is the Resource Manager endpoint of the fake Azure
-// cloud. The helper asks for tokens with this as the resource; nothing ever
-// connects to it.
-const fakeAzureResourceManager = "https://management.kaniko-unit-test.invalid/"
+// The fake Azure cloud and service principal. The helper asks for tokens for
+// fakeAzureResourceManager; nothing ever connects to it.
+const (
+	fakeAzureResourceManager = "https://management.kaniko-unit-test.invalid/"
+	fakeAzureTenant          = "kaniko-unit-test-tenant"
+	fakeAzureClient          = "kaniko-unit-test-client"
+)
+
+// fakeTokenPath is where adal sends a tenant's token requests, relative to the
+// cloud's activeDirectoryEndpoint.
+const fakeTokenPath = "/" + fakeAzureTenant + "/oauth2/token"
+
+// tokenRequest is one request the fake Azure AD endpoint received.
+type tokenRequest struct {
+	method, path string
+	form         url.Values
+}
 
 // fakeAzureAD points the ACR helper at a local Azure AD token endpoint and
 // gives it service principal credentials, with an empty Docker config. It
-// returns a function that reports the form bodies of the token requests
-// received so far.
+// returns a function that returns the requests received since its last call
+// and forgets them.
 //
 // The endpoint answers every request with HTTP 400, so the helper fails right
 // after asking for a token and never goes on to the registry's
 // /oauth2/exchange. The tests therefore make no network calls, even for real
 // ACR hosts.
-func fakeAzureAD(t *testing.T) func() []url.Values {
+//
+// The helper finds the endpoint through go-autorest's AZURESTACKCLOUD
+// environment, which reads the cloud's endpoints from
+// AZURE_ENVIRONMENT_FILEPATH. A replacement helper that doesn't use
+// go-autorest won't see it (see third_party/docker-credential-acr-env/PATCHES.md).
+func fakeAzureAD(t *testing.T) func() []tokenRequest {
 	t.Helper()
 
 	var mu sync.Mutex
-	var requests []url.Values
+	var requests []tokenRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		form, _ := url.ParseQuery(string(body))
+		_ = r.ParseForm()
 		mu.Lock()
-		requests = append(requests, form)
+		requests = append(requests, tokenRequest{r.Method, r.URL.Path, r.PostForm})
 		mu.Unlock()
 		http.Error(w, `{"error":"invalid_client"}`, http.StatusBadRequest)
 	}))
@@ -93,18 +109,20 @@ func fakeAzureAD(t *testing.T) func() []url.Values {
 	for k, v := range map[string]string{
 		"AZURE_ENVIRONMENT":          "AZURESTACKCLOUD",
 		"AZURE_ENVIRONMENT_FILEPATH": cloudFile,
-		"AZURE_TENANT_ID":            "kaniko-unit-test-tenant",
-		"AZURE_CLIENT_ID":            "kaniko-unit-test-client",
+		"AZURE_TENANT_ID":            fakeAzureTenant,
+		"AZURE_CLIENT_ID":            fakeAzureClient,
 		"AZURE_CLIENT_SECRET":        "kaniko-unit-test-secret",
 		"AZURE_AD_RESOURCE":          "",
 	} {
 		t.Setenv(k, v)
 	}
 
-	return func() []url.Values {
+	return func() []tokenRequest {
 		mu.Lock()
 		defer mu.Unlock()
-		return append([]url.Values(nil), requests...)
+		got := requests
+		requests = nil
+		return got
 	}
 }
 
@@ -117,18 +135,21 @@ func fakeAzureAD(t *testing.T) func() []url.Values {
 // helper was never reached.
 //
 // Each row is resolved the two ways kaniko does: for a repository, as
-// go-containerregistry's remote package does for FROM and COPY --from images
-// and the cache (pkg/image/remote, pkg/cache), and for a registry, as
-// pkg/executor/push.go does for the destination.
+// go-containerregistry's remote package does for FROM and COPY --from images,
+// the cache and the push permission check (pkg/image/remote, pkg/cache,
+// pkg/executor/push.go), and for a registry, as pkg/executor/push.go does
+// when it builds the push authenticator.
 func TestGetKeychainRequestsAzureTokenOnlyForACRHosts(t *testing.T) {
+	takeRequests := fakeAzureAD(t)
+
 	resolvers := []struct {
 		name    string
-		resolve func(name.Repository) (authn.Authenticator, error)
+		resolve func(context.Context, name.Repository) (authn.Authenticator, error)
 	}{
-		{"repository", func(repo name.Repository) (authn.Authenticator, error) {
-			return authn.Resolve(t.Context(), GetKeychain(), repo)
+		{"repository", func(ctx context.Context, repo name.Repository) (authn.Authenticator, error) {
+			return authn.Resolve(ctx, GetKeychain(), repo)
 		}},
-		{"registry", func(repo name.Repository) (authn.Authenticator, error) {
+		{"registry", func(_ context.Context, repo name.Repository) (authn.Authenticator, error) {
 			return GetKeychain().Resolve(repo.Registry)
 		}},
 	}
@@ -152,32 +173,41 @@ func TestGetKeychainRequestsAzureTokenOnlyForACRHosts(t *testing.T) {
 	} {
 		for _, r := range resolvers {
 			t.Run(tc.name+"/"+r.name, func(t *testing.T) {
-				tokenRequests := fakeAzureAD(t)
+				takeRequests() // drop anything left over from an earlier row
 
-				repo, err := name.NewRepository(tc.ref)
+				// Strict validation rejects a ref without an explicit
+				// registry, which would otherwise be parsed as a Docker Hub
+				// repository and never reach the ACR helper.
+				repo, err := name.NewRepository(tc.ref, name.StrictValidation)
 				if err != nil {
 					t.Fatalf("name.NewRepository(%q): %v", tc.ref, err)
 				}
-				// A ref without a registry host would be parsed as a
-				// Docker Hub repository and never reach the ACR helper.
-				if host, _, _ := strings.Cut(tc.ref, "/"); repo.RegistryStr() != host {
-					t.Fatalf("name.NewRepository(%q): registry = %q, want %q", tc.ref, repo.RegistryStr(), host)
-				}
-				auth, err := r.resolve(repo)
+				auth, err := r.resolve(t.Context(), repo)
 				if err != nil {
 					t.Fatalf("resolving %q by %s: %v", tc.ref, r.name, err)
 				}
 
-				got := tokenRequests()
+				got := takeRequests()
 				if gotTokenRequest := len(got) > 0; gotTokenRequest != tc.wantTokenRequest {
-					t.Fatalf("resolving %q by %s: Azure AD token requested = %t, want %t; requests: %v", tc.ref, r.name, gotTokenRequest, tc.wantTokenRequest, got)
+					t.Fatalf("resolving %q by %s: Azure AD token requested = %t, want %t; requests: %+v", tc.ref, r.name, gotTokenRequest, tc.wantTokenRequest, got)
 				}
-				for _, form := range got {
-					if res := form.Get("resource"); res != fakeAzureResourceManager {
-						t.Errorf("resolving %q by %s: token requested for resource %q, want %q", tc.ref, r.name, res, fakeAzureResourceManager)
+				for _, req := range got {
+					if req.method != http.MethodPost || req.path != fakeTokenPath ||
+						req.form.Get("grant_type") != "client_credentials" ||
+						req.form.Get("client_id") != fakeAzureClient ||
+						req.form.Get("resource") != fakeAzureResourceManager {
+						t.Errorf("resolving %q by %s: got request %+v, want a client_credentials POST to %s for client %q and resource %q",
+							tc.ref, r.name, req, fakeTokenPath, fakeAzureClient, fakeAzureResourceManager)
 					}
 				}
-				if !tc.wantTokenRequest && auth != authn.Anonymous {
+				// Every row ends up anonymous: the ACR helper either rejects
+				// the host or gets the fake endpoint's 400, and
+				// go-containerregistry turns any helper error into Anonymous,
+				// so GetKeychain falls through to the next keychain. This
+				// pins that fall-through. It can't detect the GO-2026-6225
+				// leak itself, which also ends in Anonymous; the token
+				// request check above does that.
+				if auth != authn.Anonymous {
 					t.Errorf("resolving %q by %s: got credentials %v, want authn.Anonymous", tc.ref, r.name, auth)
 				}
 			})
