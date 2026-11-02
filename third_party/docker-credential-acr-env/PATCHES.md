@@ -26,9 +26,19 @@ licence (Apache-2.0) and upstream copyright headers are kept.
    with an anchored, label-aware check (`isACRRegistry`): exact `host[:port]`
    only, valid port range, no trailing dot, no malformed labels, still
    case-sensitive. Non-ACR hosts now get a "credentials not found" error from
-   `Get` rather than a generic error. Tests are in
-   `pkg/credhelper/helper_test.go`; they run with kaniko's normal
-   `go test ./...`.
+   `Get` rather than a generic error. The tests run with kaniko's normal
+   `go test ./...`:
+   - `pkg/credhelper/helper_test.go` tests `isACRRegistry`, and `Get` both
+     directly and through the standalone binary's stdin path.
+   - `pkg/creds/keychain_acr_test.go` (in kaniko proper) is the main
+     behavioural test: it resolves registries through kaniko's keychain and
+     checks which ones make the helper ask Azure AD for a token. It points
+     the helper at a local fake token endpoint through go-autorest's
+     `AZURESTACKCLOUD` environment and `AZURE_ENVIRONMENT_FILEPATH`. A
+     replacement helper that doesn't get its Azure settings from go-autorest
+     (for example one using azidentity) won't see the fake endpoint, and
+     that test's ACR and MCR rows will fail with "token requested = false"
+     until it is adapted.
 2. Import paths rewritten from `github.com/chrismellard/docker-credential-acr-env/...`
    to `github.com/chainguard-dev/kaniko/third_party/docker-credential-acr-env/...`,
    and upstream's `go.mod` / `go.sum` removed. Dependencies (go-autorest,
