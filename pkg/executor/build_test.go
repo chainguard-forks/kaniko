@@ -1774,7 +1774,6 @@ func Test_stageBuilder_saveSnapshotToLayer(t *testing.T) {
 		args              args
 		expectedMediaType types.MediaType
 		expectedDiff      v1.Hash
-		expectedDigest    v1.Hash
 		wantErr           bool
 	}{
 		{
@@ -1793,10 +1792,6 @@ func Test_stageBuilder_saveSnapshotToLayer(t *testing.T) {
 				Algorithm: "sha256",
 				Hex:       "404cdd7bc109c432f8cc2443b45bcfe95980f5107215c645236e577929ac3e52",
 			},
-			expectedDigest: v1.Hash{
-				Algorithm: "sha256",
-				Hex:       "1dc5887a31ec6b388646be46c5f0b2036f92f4cbba50d12163a8be4074565a91",
-			},
 		},
 		{
 			name: "docker image",
@@ -1813,10 +1808,6 @@ func Test_stageBuilder_saveSnapshotToLayer(t *testing.T) {
 			expectedDiff: v1.Hash{
 				Algorithm: "sha256",
 				Hex:       "404cdd7bc109c432f8cc2443b45bcfe95980f5107215c645236e577929ac3e52",
-			},
-			expectedDigest: v1.Hash{
-				Algorithm: "sha256",
-				Hex:       "1dc5887a31ec6b388646be46c5f0b2036f92f4cbba50d12163a8be4074565a91",
 			},
 		},
 		{
@@ -1835,10 +1826,6 @@ func Test_stageBuilder_saveSnapshotToLayer(t *testing.T) {
 			expectedDiff: v1.Hash{
 				Algorithm: "sha256",
 				Hex:       "404cdd7bc109c432f8cc2443b45bcfe95980f5107215c645236e577929ac3e52",
-			},
-			expectedDigest: v1.Hash{
-				Algorithm: "sha256",
-				Hex:       "28369c11d9b68c9877781eaf4d8faffb4d0ada1900a1fb83ad452e58a072b45b",
 			},
 		},
 	}
@@ -1874,9 +1861,13 @@ func Test_stageBuilder_saveSnapshotToLayer(t *testing.T) {
 				t.Errorf("expected diff %s, got %s", tt.expectedDiff, diff)
 				return
 			}
-			if digest, _ := got.Digest(); digest != tt.expectedDigest {
-				t.Errorf("expected digest %s, got %s", tt.expectedDigest, digest)
-				return
+			// The compressed digest is deliberately not asserted: it depends on
+			// the exact bytes the compressor emits, which change across Go
+			// releases (compress/flate in Go 1.27) and klauspost/compress
+			// versions. The media type and diff ID above pin the behaviour that
+			// matters; only check that the compressed stream can be digested.
+			if _, err := got.Digest(); err != nil {
+				t.Errorf("computing layer digest: %v", err)
 			}
 		})
 	}
