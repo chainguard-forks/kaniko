@@ -40,7 +40,7 @@ type dockerConfigCmd struct {
 	includeArtifactRegistry bool
 }
 
-// see https://github.com/docker/docker/blob/master/cliconfig/credentials/native_store.go
+// see https://github.com/docker/cli/blob/master/cli/config/credentials/native_store.go
 const credHelperPrefix = "docker-credential-"
 
 // NewDockerConfigSubcommand returns a subcommands.Command which configures
