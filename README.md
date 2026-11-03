@@ -147,6 +147,7 @@ expect - see [Known Issues](#known-issues).
       - [Flag `--ignore-path`](#flag---ignore-path)
       - [Flag `--image-fs-extract-retry`](#flag---image-fs-extract-retry)
       - [Flag `--image-download-retry`](#flag---image-download-retry)
+      - [Flag `--preserve-xattrs`](#flag---preserve-xattrs)
     - [Debug Image](#debug-image)
   - [Security](#security)
     - [Verifying Signed Kaniko Images](#verifying-signed-kaniko-images)
@@ -1003,6 +1004,27 @@ this flag should be set to match the image resource `outputImageDir`.
 _Note: Depending on the built image, the media type of the image manifest might
 be either `application/vnd.oci.image.manifest.v1+json` or
 `application/vnd.docker.distribution.manifest.v2+json`._
+
+#### Flag `--preserve-xattrs`
+
+Keep extended attributes (file capabilities such as `security.capability`,
+and POSIX ACLs) on files in the base image and on files changed by build
+steps. Set to false by default.
+
+By default kaniko drops every `SCHILY.xattr.*` and `SCHILY.acl.*` record from
+the layers it handles. Docker, BuildKit and containerd apply those records when
+they unpack an image, so a base image can carry a capability or an ACL that
+shows up in neither the file mode nor a plain `tar -tv` listing. Because kaniko
+pushes the layers of the base image unchanged, kaniko reads each base image
+layer once and rewrites any layer that has such records. Layers without them
+keep their digests; rewritten layers get new digests, so they no longer share
+a blob with the base image.
+
+This changes images that rely on file capabilities. For example
+`quay.io/podman/stable` and `quay.io/buildah/stable` set `cap_setuid` on
+`newuidmap` and `cap_setgid` on `newgidmap`, and rootless podman fails in an
+image built `FROM` them unless this flag is set. Installing a package that
+ships a file capability in a `RUN` step is affected in the same way.
 
 #### Flag `--push-ignore-immutable-tag-errors`
 

@@ -239,6 +239,7 @@ func addKanikoOptionsFlags() {
 	RootCmd.PersistentFlags().BoolVarP(&opts.SkipTLSVerifyPull, "skip-tls-verify-pull", "", false, "Pull from insecure registry ignoring TLS verify")
 	RootCmd.PersistentFlags().IntVar(&opts.PushRetry, "push-retry", 0, "Number of retries for the push operation")
 	RootCmd.PersistentFlags().BoolVar(&opts.PushIgnoreImmutableTagErrors, "push-ignore-immutable-tag-errors", false, "If true, known tag immutability errors are ignored and the push finishes with success.")
+	RootCmd.PersistentFlags().BoolVarP(&opts.PreserveXattrs, "preserve-xattrs", "", false, "Keep extended attributes (file capabilities, POSIX ACLs) from base image layers and build steps. By default they are dropped.")
 	RootCmd.PersistentFlags().IntVar(&opts.ImageFSExtractRetry, "image-fs-extract-retry", 0, "Number of retries for image FS extraction")
 	RootCmd.PersistentFlags().IntVar(&opts.ImageDownloadRetry, "image-download-retry", 0, "Number of retries for downloading the remote image")
 	RootCmd.PersistentFlags().StringVarP(&opts.KanikoDir, "kaniko-dir", "", constants.DefaultKanikoPath, "Path to the kaniko directory, this takes precedence over the KANIKO_DIR environment variable.")

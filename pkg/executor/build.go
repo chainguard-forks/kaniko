@@ -92,6 +92,17 @@ func newStageBuilder(args *dockerfile.BuildArgs, opts *config.KanikoOptions, sta
 		return nil, err
 	}
 
+	// Layers of the base image are pushed unchanged, so extended attributes in
+	// them (file capabilities, POSIX ACLs) would survive into the built image
+	// unless they are removed here.
+	util.SetPreserveXattrs(opts.PreserveXattrs)
+	if !opts.PreserveXattrs {
+		sourceImage, err = util.StripImageXattrs(sourceImage)
+		if err != nil {
+			return nil, errors.Wrap(err, "removing extended attributes from base image")
+		}
+	}
+
 	imageConfig, err := initializeConfig(sourceImage, opts)
 	if err != nil {
 		return nil, err

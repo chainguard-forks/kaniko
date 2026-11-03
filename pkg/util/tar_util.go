@@ -147,9 +147,14 @@ const (
 	securityCapabilityXattr = "security.capability"
 )
 
-// writeSecurityXattrToTarFile writes security.capability
-// xattrs from a tar header to filesystem
+// writeSecurityXattrToTarFile writes the security.capability xattr from a tar
+// header to the filesystem, but only with --preserve-xattrs. By default every
+// xattr and ACL record in a layer is dropped; see xattr_strip.go.
 func writeSecurityXattrToTarFile(path string, hdr *tar.Header) error {
+	if names := xattrRecordNames(hdr); len(names) > 0 && !PreserveXattrs() {
+		logrus.Infof("Dropping extended attributes %v on %s; use --preserve-xattrs to keep them", names, path)
+		return nil
+	}
 	if hdr.Xattrs == nil {
 		return nil
 	}
@@ -173,6 +178,10 @@ func readSecurityXattrToTarHeader(path string, hdr *tar.Header) error {
 		return errors.Wrapf(err, "failed to read %q attribute from %q", securityCapabilityXattr, path)
 	}
 	if capability != nil {
+		if !PreserveXattrs() {
+			logrus.Infof("Dropping %s on %s; use --preserve-xattrs to keep it", securityCapabilityXattr, path)
+			return nil
+		}
 		hdr.Xattrs[securityCapabilityXattr] = string(capability)
 	}
 	return nil
