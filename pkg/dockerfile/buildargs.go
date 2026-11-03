@@ -19,7 +19,7 @@ package dockerfile
 import (
 	"strings"
 
-	d "github.com/docker/docker/builder/dockerfile"
+	d "github.com/chainguard-dev/kaniko/third_party/moby/builder/dockerfile"
 	"github.com/moby/buildkit/frontend/dockerfile/instructions"
 )
 
