@@ -63,4 +63,6 @@ upstream behaviour, but from v0.9.0 the fork adds an azidentity auth path behind
 `FF_DOCKER_ACR_AZIDENTITY` (on by default in v1.0.0), which is a bigger
 behavioural change than a credential-leak fix should carry. Its host check is
 anchored but coarser than ours (no label validation, no `Host == input` guard).
-Revisit when kaniko moves to Go 1.27, if we want advisory matching back.
+Revisit when kaniko's `go.mod` moves to `go 1.27` (the builder image and CI moved
+in #521; the module directive is still 1.26.x, and osscontainertools v1.0.0
+requires `go 1.27.0`), if we want advisory matching back.

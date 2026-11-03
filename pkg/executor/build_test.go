@@ -20,6 +20,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -39,6 +40,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/partial"
+	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/moby/buildkit/frontend/dockerfile/instructions"
 )
@@ -1748,6 +1750,8 @@ func Test_ResolveCrossStageInstructions(t *testing.T) {
 
 func Test_stageBuilder_saveSnapshotToLayer(t *testing.T) {
 	dir, files := tempDirAndFile(t)
+	gzipMagic := []byte{0x1f, 0x8b}
+	zstdMagic := []byte{0x28, 0xb5, 0x2f, 0xfd}
 	type fields struct {
 		stage            config.KanikoStage
 		image            v1.Image
@@ -1774,7 +1778,7 @@ func Test_stageBuilder_saveSnapshotToLayer(t *testing.T) {
 		args              args
 		expectedMediaType types.MediaType
 		expectedDiff      v1.Hash
-		expectedDigest    v1.Hash
+		expectedMagic     []byte
 		wantErr           bool
 	}{
 		{
@@ -1793,10 +1797,7 @@ func Test_stageBuilder_saveSnapshotToLayer(t *testing.T) {
 				Algorithm: "sha256",
 				Hex:       "404cdd7bc109c432f8cc2443b45bcfe95980f5107215c645236e577929ac3e52",
 			},
-			expectedDigest: v1.Hash{
-				Algorithm: "sha256",
-				Hex:       "1dc5887a31ec6b388646be46c5f0b2036f92f4cbba50d12163a8be4074565a91",
-			},
+			expectedMagic: gzipMagic,
 		},
 		{
 			name: "docker image",
@@ -1814,10 +1815,7 @@ func Test_stageBuilder_saveSnapshotToLayer(t *testing.T) {
 				Algorithm: "sha256",
 				Hex:       "404cdd7bc109c432f8cc2443b45bcfe95980f5107215c645236e577929ac3e52",
 			},
-			expectedDigest: v1.Hash{
-				Algorithm: "sha256",
-				Hex:       "1dc5887a31ec6b388646be46c5f0b2036f92f4cbba50d12163a8be4074565a91",
-			},
+			expectedMagic: gzipMagic,
 		},
 		{
 			name: "oci image, zstd compression",
@@ -1836,10 +1834,7 @@ func Test_stageBuilder_saveSnapshotToLayer(t *testing.T) {
 				Algorithm: "sha256",
 				Hex:       "404cdd7bc109c432f8cc2443b45bcfe95980f5107215c645236e577929ac3e52",
 			},
-			expectedDigest: v1.Hash{
-				Algorithm: "sha256",
-				Hex:       "28369c11d9b68c9877781eaf4d8faffb4d0ada1900a1fb83ad452e58a072b45b",
-			},
+			expectedMagic: zstdMagic,
 		},
 	}
 	for _, tt := range tests {
@@ -1874,9 +1869,31 @@ func Test_stageBuilder_saveSnapshotToLayer(t *testing.T) {
 				t.Errorf("expected diff %s, got %s", tt.expectedDiff, diff)
 				return
 			}
-			if digest, _ := got.Digest(); digest != tt.expectedDigest {
-				t.Errorf("expected digest %s, got %s", tt.expectedDigest, digest)
-				return
+			// The compressed digest is deliberately not asserted: it pins the
+			// exact bytes the compressor emits, which change across Go releases
+			// (compress/flate in Go 1.27). Instead pin the compression choice
+			// without pinning the compressor: the stream must start with the
+			// codec's magic bytes and decompress to the diff ID.
+			rc, err := got.Compressed()
+			if err != nil {
+				t.Fatalf("Compressed(): %v", err)
+			}
+			defer rc.Close()
+			magic := make([]byte, len(tt.expectedMagic))
+			if _, err := io.ReadFull(rc, magic); err != nil {
+				t.Fatalf("reading compressed stream: %v", err)
+			}
+			if !bytes.Equal(magic, tt.expectedMagic) {
+				t.Errorf("compressed stream starts with % x, want % x", magic, tt.expectedMagic)
+			}
+			roundTrip, err := tarball.LayerFromOpener(got.Compressed)
+			if err != nil {
+				t.Fatalf("reading the compressed stream back as a layer: %v", err)
+			}
+			if diff, err := roundTrip.DiffID(); err != nil {
+				t.Errorf("decompressing layer: %v", err)
+			} else if diff != tt.expectedDiff {
+				t.Errorf("compressed stream decompresses to %s, want diff ID %s", diff, tt.expectedDiff)
 			}
 		})
 	}
