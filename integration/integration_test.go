@@ -699,7 +699,14 @@ func TestWarmerTwice(t *testing.T) {
 	dockerRunFlags := []string{"run", "--net=host"}
 	dockerRunFlags = addServiceAccountFlags(dockerRunFlags, config.serviceAccount)
 	dockerRunFlags = append(dockerRunFlags,
-		"--memory=16m",
+		// The memory cap dates from upstream #2893's reproduction of the
+		// warm-twice bug and was never tuned. The warmer streams layers to a
+		// temp file, so the cap is only a coarse guard against buffering layer
+		// contents in memory. 16m left no headroom: the warmer was OOM-killed
+		// (exit 137) on four CI runs in four days with identical code passing on
+		// retry. 64m still fails a warmer that holds an unpacked
+		// debian:trixie-slim layer (the compressed image alone is ~30 MB).
+		"--memory=64m",
 		"-v", cwd+":/cache",
 		WarmerImage,
 		"--cache-dir=/cache",
