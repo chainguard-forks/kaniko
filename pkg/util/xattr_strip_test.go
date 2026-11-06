@@ -20,6 +20,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -31,6 +32,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
+	"github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/sirupsen/logrus"
 )
 
 // capBlob is a vfs_cap_data blob granting CAP_SETUID (revision 2, permitted).
@@ -44,7 +47,7 @@ type tarEntry struct {
 	xattrs map[string]string
 }
 
-func buildLayer(t *testing.T, entries []tarEntry) v1.Layer {
+func buildLayer(t *testing.T, entries []tarEntry, opts ...tarball.LayerOption) v1.Layer {
 	t.Helper()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -72,7 +75,7 @@ func buildLayer(t *testing.T, entries []tarEntry) v1.Layer {
 	b := buf.Bytes()
 	l, err := tarball.LayerFromOpener(func() (io.ReadCloser, error) {
 		return io.NopCloser(bytes.NewReader(b)), nil
-	})
+	}, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +134,23 @@ func useKanikoDir(t *testing.T) {
 	t.Cleanup(func() { config.KanikoDir = old })
 }
 
+// stripFiles lists the rewritten layers kept under the kaniko directory.
+func stripFiles(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(xattrStripDir())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
 func TestStripImageXattrs(t *testing.T) {
 	useKanikoDir(t)
 
@@ -147,9 +167,15 @@ func TestStripImageXattrs(t *testing.T) {
 	})
 	img := buildImage(t, capLayer, cleanLayer, legacyLayer)
 
-	got, err := StripImageXattrs(img)
+	got, err := StripImageXattrs(img, 0)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	// Only the two rewritten layers are kept on disk; the layer without xattrs
+	// left no temporary file behind.
+	if n := len(stripFiles(t)); n != 2 {
+		t.Errorf("got %d rewritten layer files, want 2", n)
 	}
 
 	layers, err := got.Layers()
@@ -245,12 +271,15 @@ func validateImage(img v1.Image) error {
 func TestStripImageXattrsNoRecordsReturnsSameImage(t *testing.T) {
 	useKanikoDir(t)
 	img := buildImage(t, buildLayer(t, []tarEntry{{name: "a", body: "a"}}))
-	got, err := StripImageXattrs(img)
+	got, err := StripImageXattrs(img, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != img {
 		t.Error("image without xattrs was rebuilt")
+	}
+	if n := stripFiles(t); len(n) != 0 {
+		t.Errorf("temporary files left behind: %v", n)
 	}
 	od, _ := img.Digest()
 	nd, _ := got.Digest()
@@ -259,14 +288,14 @@ func TestStripImageXattrsNoRecordsReturnsSameImage(t *testing.T) {
 	}
 }
 
-func TestExtractFileDropsXattrsByDefault(t *testing.T) {
-	for _, preserve := range []bool{false, true} {
-		t.Run(map[bool]string{false: "default", true: "preserve"}[preserve], func(t *testing.T) {
-			if preserve && os.Geteuid() != 0 {
+func TestExtractFileXattrs(t *testing.T) {
+	for _, strip := range []bool{false, true} {
+		t.Run(map[bool]string{false: "default", true: "strip"}[strip], func(t *testing.T) {
+			if !strip && os.Geteuid() != 0 {
 				t.Skip("setting security.capability needs root")
 			}
-			SetPreserveXattrs(preserve)
-			t.Cleanup(func() { SetPreserveXattrs(false) })
+			SetStripXattrs(strip)
+			t.Cleanup(func() { SetStripXattrs(false) })
 
 			dir := t.TempDir()
 			path := filepath.Join(dir, "cap")
@@ -283,14 +312,158 @@ func TestExtractFileDropsXattrsByDefault(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, err := system.Lgetxattr(path, securityCapabilityXattr)
-			if !preserve {
+			if strip {
 				if got != nil {
-					t.Fatalf("capability was written by default: %q", got)
+					t.Fatalf("capability was written with --strip-xattrs: %q", got)
 				}
 				return
 			}
 			if err != nil || got == nil {
-				t.Fatalf("capability was not kept with --preserve-xattrs: %v", err)
+				t.Fatalf("capability was not kept by default: %v", err)
+			}
+		})
+	}
+}
+
+func TestStripImageXattrsUncompressedMediaType(t *testing.T) {
+	useKanikoDir(t)
+	for _, tc := range []struct{ in, want types.MediaType }{
+		{types.OCIUncompressedLayer, types.OCILayer},
+		{types.DockerUncompressedLayer, types.DockerLayer},
+		{types.OCILayer, types.OCILayer},
+		{types.DockerLayer, types.DockerLayer},
+	} {
+		t.Run(string(tc.in), func(t *testing.T) {
+			l := buildLayer(t, []tarEntry{
+				{name: "usr/bin/cap", body: "b", pax: map[string]string{"SCHILY.xattr.security.capability": capBlob}},
+			}, tarball.WithMediaType(tc.in))
+			nl, n, err := stripLayerXattrs(l, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if nl == nil || n != 1 {
+				t.Fatalf("layer was not rewritten: %v %d", nl, n)
+			}
+			got, err := nl.MediaType()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Errorf("media type %s, want %s", got, tc.want)
+			}
+			// The blob must be compressed, since that is what the type says.
+			rc, err := nl.Compressed()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rc.Close()
+			magic := make([]byte, 2)
+			if _, err := io.ReadFull(rc, magic); err != nil {
+				t.Fatal(err)
+			}
+			if magic[0] != 0x1f || magic[1] != 0x8b {
+				t.Errorf("blob is not gzip: % x", magic)
+			}
+		})
+	}
+}
+
+func TestStripImageXattrsCompressionLevel(t *testing.T) {
+	useKanikoDir(t)
+	var b bytes.Buffer
+	for i := 0; i < 4000; i++ {
+		fmt.Fprintf(&b, "line %c kaniko strips xattrs from base layers number %c\n", 'a'+i%26, 'A'+(i*7)%26)
+	}
+	size := func(level int) int64 {
+		l := buildLayer(t, []tarEntry{
+			{name: "usr/bin/cap", body: b.String(), pax: map[string]string{"SCHILY.xattr.security.capability": capBlob}},
+		})
+		nl, _, err := stripLayerXattrs(l, level)
+		if err != nil || nl == nil {
+			t.Fatalf("layer was not rewritten: %v", err)
+		}
+		n, err := nl.Size()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	// go-containerregistry compresses at its default (fastest) level unless it is
+	// told otherwise, so a smaller blob at level 9 shows the level is passed on.
+	def, best := size(0), size(9)
+	if best >= def {
+		t.Errorf("level 9 produced %d bytes, not fewer than the default level (%d)", best, def)
+	}
+}
+
+func TestRemoveXattrStripFiles(t *testing.T) {
+	useKanikoDir(t)
+	l := buildLayer(t, []tarEntry{
+		{name: "usr/bin/cap", body: "b", pax: map[string]string{"SCHILY.xattr.security.capability": capBlob}},
+	})
+	if _, _, err := stripLayerXattrs(l, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(stripFiles(t)) != 1 {
+		t.Fatalf("expected one rewritten layer file, got %v", stripFiles(t))
+	}
+	if err := RemoveXattrStripFiles(); err != nil {
+		t.Fatal(err)
+	}
+	if n := stripFiles(t); len(n) != 0 {
+		t.Errorf("files left after RemoveXattrStripFiles: %v", n)
+	}
+	// Removing when there is nothing to remove is not an error.
+	if err := RemoveXattrStripFiles(); err != nil {
+		t.Error(err)
+	}
+}
+
+type captureHook struct{ entries []*logrus.Entry }
+
+func (h *captureHook) Levels() []logrus.Level { return logrus.AllLevels }
+func (h *captureHook) Fire(e *logrus.Entry) error {
+	h.entries = append(h.entries, e)
+	return nil
+}
+
+// Only security.capability is ever applied to the filesystem, so only a record
+// for it is worth an info message when --strip-xattrs leaves it out.
+func TestStripLogsInfoOnlyForCapability(t *testing.T) {
+	SetStripXattrs(true)
+	t.Cleanup(func() { SetStripXattrs(false) })
+	oldLevel := logrus.GetLevel()
+	logrus.SetLevel(logrus.DebugLevel)
+	t.Cleanup(func() { logrus.SetLevel(oldLevel) })
+
+	for _, tc := range []struct {
+		name     string
+		pax      map[string]string
+		wantInfo int
+	}{
+		{"capability", map[string]string{"SCHILY.xattr.security.capability": capBlob}, 1},
+		{"capability-and-others", map[string]string{"SCHILY.xattr.security.capability": capBlob, "SCHILY.xattr.user.x": "v"}, 1},
+		{"acl-only", map[string]string{"SCHILY.acl.access": "user::rw-"}, 0},
+		{"user-xattr-only", map[string]string{"SCHILY.xattr.user.x": "v"}, 0},
+		{"none", nil, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hook := &captureHook{}
+			logrus.AddHook(hook)
+			t.Cleanup(func() { logrus.StandardLogger().ReplaceHooks(make(logrus.LevelHooks)) })
+
+			hdr := &tar.Header{Typeflag: tar.TypeReg, Name: "f", PAXRecords: tc.pax}
+			if err := writeSecurityXattrToTarFile("/nonexistent/f", hdr); err != nil {
+				t.Fatal(err)
+			}
+			info := 0
+			for _, e := range hook.entries {
+				if e.Level == logrus.InfoLevel {
+					info++
+				}
+			}
+			if info != tc.wantInfo {
+				t.Errorf("got %d info messages, want %d: %v", info, tc.wantInfo, hook.entries)
 			}
 		})
 	}

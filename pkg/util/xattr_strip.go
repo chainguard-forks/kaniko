@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/sirupsen/logrus"
 )
 
@@ -41,22 +43,34 @@ import (
 // mode bits or a default `tar -tv` listing. SCHILY.acl.* is the record GNU
 // tar and bsdtar use for ACLs.
 //
-// kaniko drops these records by default, both for files it writes itself and
-// for the layers of the base image, which it would otherwise push unchanged.
-// --preserve-xattrs turns that off.
+// By default kaniko behaves like those builders and keeps the records.
+// --strip-xattrs drops them, both for files kaniko writes itself and for the
+// layers of the base image, which it would otherwise push unchanged.
 const (
 	paxXattrPrefix = "SCHILY.xattr."
 	paxACLPrefix   = "SCHILY.acl."
+
+	// xattrStripDirName is the directory under the kaniko directory that holds
+	// the rewritten base image layers until the image has been pushed.
+	xattrStripDirName = "xattr-strip"
 )
 
-var preserveXattrs atomic.Bool
+var stripXattrs atomic.Bool
 
-// SetPreserveXattrs controls whether extended attributes from layer tar
-// entries are kept (true) or dropped (false, the default).
-func SetPreserveXattrs(v bool) { preserveXattrs.Store(v) }
+// SetStripXattrs controls whether extended attributes from layer tar entries
+// are dropped (true) or kept (false, the default).
+func SetStripXattrs(v bool) { stripXattrs.Store(v) }
 
-// PreserveXattrs reports whether extended attributes are kept.
-func PreserveXattrs() bool { return preserveXattrs.Load() }
+// StripXattrs reports whether extended attributes are dropped.
+func StripXattrs() bool { return stripXattrs.Load() }
+
+func xattrStripDir() string { return filepath.Join(config.KanikoDir, xattrStripDirName) }
+
+// RemoveXattrStripFiles deletes the rewritten layers that StripImageXattrs
+// wrote. They have to stay in place until the image has been pushed, so this is
+// called at the start of a build (for files left by an earlier run in a reused
+// container) and again after the push.
+func RemoveXattrStripFiles() error { return os.RemoveAll(xattrStripDir()) }
 
 func hasKey(m map[string]string, k string) bool {
 	_, ok := m[k]
@@ -102,44 +116,42 @@ func stripXattrRecords(hdr *tar.Header) []string {
 	return names
 }
 
-// layerHasXattrs reports whether any entry of the layer carries xattr or ACL
-// records.
-func layerHasXattrs(l v1.Layer) (bool, error) {
-	r, err := l.Uncompressed()
-	if err != nil {
-		return false, err
+// rewrittenMediaType returns the media type for a layer that stripLayerXattrs
+// has rewritten. go-containerregistry always compresses the blobs it builds
+// (WithCompression(None) is not supported), so an uncompressed layer type would
+// describe a gzip blob; use the matching compressed type instead.
+func rewrittenMediaType(mt types.MediaType) types.MediaType {
+	switch mt {
+	case types.OCIUncompressedLayer:
+		return types.OCILayer
+	case types.DockerUncompressedLayer:
+		return types.DockerLayer
 	}
-	defer r.Close()
-
-	tr := tar.NewReader(r)
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			// Drain the trailing bytes so the digest is verified.
-			_, err := io.Copy(io.Discard, r)
-			return false, err
-		}
-		if err != nil {
-			return false, err
-		}
-		if len(xattrRecordNames(hdr)) > 0 {
-			return true, nil
-		}
-	}
+	return mt
 }
 
 // stripLayerXattrs returns a copy of l with every xattr and ACL record removed
-// from its tar entries. File contents, modes, ownership, times and entry order
-// are unchanged. The new layer is written to a file under the kaniko directory
-// (which is excluded from snapshots) so that a large layer is not held in memory.
-func stripLayerXattrs(l v1.Layer) (v1.Layer, int, error) {
+// from its tar entries, and the number of entries that had records. File
+// contents, modes, ownership, times and entry order are unchanged. If no entry
+// has a record it returns a nil layer and nothing is kept.
+//
+// The layer is read once: it is rewritten into a temporary file while it is
+// scanned, and the file is discarded if nothing was stripped. The file is under
+// the kaniko directory (which is excluded from snapshots) so that a large layer
+// is not held in memory, and stays there until RemoveXattrStripFiles because the
+// returned layer reads from it when the image is pushed. The rewritten blob is
+// compressed with compressionLevel, like the layers kaniko builds itself.
+func stripLayerXattrs(l v1.Layer, compressionLevel int) (v1.Layer, int, error) {
 	mt, err := l.MediaType()
 	if err != nil {
 		return nil, 0, err
 	}
-	opts := []tarball.LayerOption{tarball.WithMediaType(mt)}
+	opts := []tarball.LayerOption{tarball.WithMediaType(rewrittenMediaType(mt))}
 	if strings.Contains(string(mt), "zstd") {
 		opts = append(opts, tarball.WithCompression(compression.ZStd))
+	}
+	if compressionLevel > 0 {
+		opts = append(opts, tarball.WithCompressionLevel(compressionLevel))
 	}
 
 	r, err := l.Uncompressed()
@@ -148,14 +160,21 @@ func stripLayerXattrs(l v1.Layer) (v1.Layer, int, error) {
 	}
 	defer r.Close()
 
-	if err := os.MkdirAll(config.KanikoDir, 0o755); err != nil {
+	dir := xattrStripDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, 0, err
 	}
-	out, err := os.CreateTemp(config.KanikoDir, "xattr-strip-*.tar")
+	out, err := os.CreateTemp(dir, "layer-*.tar")
 	if err != nil {
 		return nil, 0, err
 	}
-	defer out.Close()
+	keep := false
+	defer func() {
+		out.Close()
+		if !keep {
+			os.Remove(out.Name())
+		}
+	}()
 
 	tw := tar.NewWriter(out)
 	tr := tar.NewReader(r)
@@ -180,8 +199,12 @@ func stripLayerXattrs(l v1.Layer) (v1.Layer, int, error) {
 			}
 		}
 	}
+	// Drain the trailing bytes so the digest of the source layer is verified.
 	if _, err := io.Copy(io.Discard, r); err != nil {
 		return nil, 0, fmt.Errorf("verifying layer: %w", err)
+	}
+	if stripped == 0 {
+		return nil, 0, nil
 	}
 	if err := tw.Close(); err != nil {
 		return nil, 0, err
@@ -191,7 +214,11 @@ func stripLayerXattrs(l v1.Layer) (v1.Layer, int, error) {
 	}
 
 	nl, err := tarball.LayerFromFile(out.Name(), opts...)
-	return nl, stripped, err
+	if err != nil {
+		return nil, 0, err
+	}
+	keep = true
+	return nl, stripped, nil
 }
 
 // StripImageXattrs returns img with the xattr and ACL records removed from
@@ -200,8 +227,11 @@ func stripLayerXattrs(l v1.Layer) (v1.Layer, int, error) {
 // returned, so the image digest is unchanged.
 //
 // Finding the affected layers means reading every layer once. For an image
-// that has to be pulled that is an extra download of each layer.
-func StripImageXattrs(img v1.Image) (v1.Image, error) {
+// that has to be pulled that is an extra download of each layer. A base layer
+// that Go's archive/tar cannot parse makes this fail, including for builds that
+// would never have unpacked that layer. Rewritten layers are compressed with
+// compressionLevel (the --compression-level value, 0 for the default).
+func StripImageXattrs(img v1.Image, compressionLevel int) (v1.Image, error) {
 	layers, err := img.Layers()
 	if err != nil {
 		return nil, err
@@ -219,21 +249,17 @@ func StripImageXattrs(img v1.Image) (v1.Image, error) {
 			newLayers[i] = l
 			continue
 		}
-		has, err := layerHasXattrs(l)
-		if err != nil {
-			return nil, fmt.Errorf("scanning layer %d for extended attributes: %w", i, err)
-		}
-		if !has {
-			newLayers[i] = l
-			continue
-		}
-		nl, n, err := stripLayerXattrs(l)
+		nl, n, err := stripLayerXattrs(l, compressionLevel)
 		if err != nil {
 			return nil, fmt.Errorf("removing extended attributes from layer %d: %w", i, err)
 		}
+		if nl == nil {
+			newLayers[i] = l
+			continue
+		}
 		d, _ := l.Digest()
 		nd, _ := nl.Digest()
-		logrus.Infof("Dropped extended attributes (file capabilities, ACLs) from %d entries in base image layer %d (%s -> %s); use --preserve-xattrs to keep them", n, i, d, nd)
+		logrus.Infof("Removed extended attributes (file capabilities, ACLs) from %d entries in base image layer %d (%s -> %s)", n, i, d, nd)
 		newLayers[i] = nl
 		changed = true
 	}

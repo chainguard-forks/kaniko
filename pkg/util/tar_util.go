@@ -147,12 +147,29 @@ const (
 	securityCapabilityXattr = "security.capability"
 )
 
-// writeSecurityXattrToTarFile writes the security.capability xattr from a tar
-// header to the filesystem, but only with --preserve-xattrs. By default every
-// xattr and ACL record in a layer is dropped; see xattr_strip.go.
+// logStrippedXattrs reports the xattr and ACL records that --strip-xattrs is
+// leaving out on path. Only security.capability is ever applied to the
+// filesystem (and so only it would be kept without the flag), so that one is
+// logged at info level; the other records were never applied and are logged at
+// debug level.
+func logStrippedXattrs(path string, names []string) {
+	if len(names) == 0 {
+		return
+	}
+	for _, n := range names {
+		if n == paxXattrPrefix+securityCapabilityXattr {
+			logrus.Infof("Not applying %s on %s (--strip-xattrs)", securityCapabilityXattr, path)
+			return
+		}
+	}
+	logrus.Debugf("Not applying extended attributes %v on %s (--strip-xattrs)", names, path)
+}
+
+// writeSecurityXattrToTarFile writes security.capability
+// xattrs from a tar header to filesystem, unless --strip-xattrs is set.
 func writeSecurityXattrToTarFile(path string, hdr *tar.Header) error {
-	if names := xattrRecordNames(hdr); len(names) > 0 && !PreserveXattrs() {
-		logrus.Infof("Dropping extended attributes %v on %s; use --preserve-xattrs to keep them", names, path)
+	if StripXattrs() {
+		logStrippedXattrs(path, xattrRecordNames(hdr))
 		return nil
 	}
 	if hdr.Xattrs == nil {
@@ -178,8 +195,8 @@ func readSecurityXattrToTarHeader(path string, hdr *tar.Header) error {
 		return errors.Wrapf(err, "failed to read %q attribute from %q", securityCapabilityXattr, path)
 	}
 	if capability != nil {
-		if !PreserveXattrs() {
-			logrus.Infof("Dropping %s on %s; use --preserve-xattrs to keep it", securityCapabilityXattr, path)
+		if StripXattrs() {
+			logrus.Infof("Not recording %s from %s in the layer (--strip-xattrs)", securityCapabilityXattr, path)
 			return nil
 		}
 		hdr.Xattrs[securityCapabilityXattr] = string(capability)

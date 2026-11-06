@@ -145,11 +145,12 @@ func xattrRecords(t *testing.T, ref string) []string {
 	return found
 }
 
-// TestXattrsDroppedFromBaseLayers builds FROM a base whose layer carries a file
+// TestStripXattrsFromBaseLayers builds FROM a base whose layer carries a file
 // capability and a POSIX ACL, and checks what the pushed image contains. The
 // base layer is pushed as it is unless kaniko rewrites it, so this only shows
-// up in the registry, not in the build filesystem.
-func TestXattrsDroppedFromBaseLayers(t *testing.T) {
+// up in the registry, not in the build filesystem. By default kaniko keeps the
+// records, like Docker, BuildKit and containerd; --strip-xattrs removes them.
+func TestStripXattrsFromBaseLayers(t *testing.T) {
 	base := GetKanikoImage(config.imageRepo, "xattr-base")
 	pushBaseWithXattrs(t, base)
 
@@ -159,10 +160,11 @@ func TestXattrsDroppedFromBaseLayers(t *testing.T) {
 		flags      []string
 		wantRecord bool
 	}{
-		{name: "unchanged-build", runLine: "RUN echo built"},
-		{name: "single-snapshot", runLine: "RUN echo built", flags: []string{"--single-snapshot"}},
-		{name: "file-modified", runLine: "RUN touch /usr/bin/cap"},
-		{name: "preserve-xattrs", runLine: "RUN echo built", flags: []string{"--preserve-xattrs"}, wantRecord: true},
+		{name: "default-keeps-xattrs", runLine: "RUN echo built", wantRecord: true},
+		{name: "unchanged-build", runLine: "RUN echo built", flags: []string{"--strip-xattrs"}},
+		{name: "single-snapshot", runLine: "RUN echo built", flags: []string{"--strip-xattrs", "--single-snapshot"}},
+		{name: "file-modified", runLine: "RUN touch /usr/bin/cap", flags: []string{"--strip-xattrs"}},
+		{name: "compression-level", runLine: "RUN echo built", flags: []string{"--strip-xattrs", "--compression-level=9"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -190,5 +192,32 @@ func TestXattrsDroppedFromBaseLayers(t *testing.T) {
 				t.Errorf("expected no xattr or ACL records in the pushed image, got %v", got)
 			}
 		})
+	}
+}
+
+// TestStripXattrsMultiStage covers a later stage built on an earlier one, whose
+// base is read from /kaniko/stages and is not scanned again, and COPY --from of
+// a remote image, which is unpacked before any stage is built. With
+// --strip-xattrs neither may bring a capability or ACL record into the result.
+func TestStripXattrsMultiStage(t *testing.T) {
+	base := GetKanikoImage(config.imageRepo, "xattr-base-ms")
+	pushBaseWithXattrs(t, base)
+
+	ctxDir := t.TempDir()
+	df := fmt.Sprintf("FROM %s AS first\nRUN echo first\n\nFROM first\nRUN echo second\n\nFROM alpine:3.20\nCOPY --from=%s /usr/bin/cap /cap\nCOPY --from=first /etc/secret /secret\n", base, base)
+	if err := os.WriteFile(filepath.Join(ctxDir, "Dockerfile"), []byte(df), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := GetKanikoImage(config.imageRepo, "xattr-out-ms")
+
+	args := []string{"run", "--net=host", "-v", ctxDir + ":/workspace"}
+	args = addServiceAccountFlags(args, config.serviceAccount)
+	args = append(args, ExecutorImage,
+		"-f", "/workspace/Dockerfile", "-c", "dir:///workspace", "-d", out, "--strip-xattrs")
+	if o, err := RunCommandWithoutTest(exec.Command("docker", args...)); err != nil {
+		t.Fatalf("kaniko build failed: %v\n%s", err, o)
+	}
+	if got := xattrRecords(t, out); len(got) != 0 {
+		t.Errorf("expected no xattr or ACL records in the pushed image, got %v", got)
 	}
 }

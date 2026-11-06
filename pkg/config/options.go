@@ -85,7 +85,7 @@ type KanikoOptions struct {
 	Cleanup                  bool
 	CompressedCaching        bool
 	IgnoreVarRun             bool
-	PreserveXattrs           bool
+	StripXattrs              bool
 	SkipUnusedStages         bool
 	RunV2                    bool
 	CacheCopyLayers          bool

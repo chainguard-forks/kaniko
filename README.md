@@ -147,7 +147,7 @@ expect - see [Known Issues](#known-issues).
       - [Flag `--ignore-path`](#flag---ignore-path)
       - [Flag `--image-fs-extract-retry`](#flag---image-fs-extract-retry)
       - [Flag `--image-download-retry`](#flag---image-download-retry)
-      - [Flag `--preserve-xattrs`](#flag---preserve-xattrs)
+      - [Flag `--strip-xattrs`](#flag---strip-xattrs)
     - [Debug Image](#debug-image)
   - [Security](#security)
     - [Verifying Signed Kaniko Images](#verifying-signed-kaniko-images)
@@ -1005,26 +1005,38 @@ _Note: Depending on the built image, the media type of the image manifest might
 be either `application/vnd.oci.image.manifest.v1+json` or
 `application/vnd.docker.distribution.manifest.v2+json`._
 
-#### Flag `--preserve-xattrs`
+#### Flag `--strip-xattrs`
 
-Keep extended attributes (file capabilities such as `security.capability`,
-and POSIX ACLs) on files in the base image and on files changed by build
-steps. Set to false by default.
+Drop extended attributes (file capabilities such as `security.capability`,
+and POSIX ACLs) from the base image layers and from the files that build steps
+and `COPY --from` write. Set to false by default, which keeps them, as Docker,
+BuildKit and containerd do.
 
-By default kaniko drops every `SCHILY.xattr.*` and `SCHILY.acl.*` record from
-the layers it handles. Docker, BuildKit and containerd apply those records when
-they unpack an image, so a base image can carry a capability or an ACL that
-shows up in neither the file mode nor a plain `tar -tv` listing. Because kaniko
-pushes the layers of the base image unchanged, kaniko reads each base image
-layer once and rewrites any layer that has such records. Layers without them
-keep their digests; rewritten layers get new digests, so they no longer share
-a blob with the base image.
+A layer can carry a capability or an ACL in `SCHILY.xattr.*` and `SCHILY.acl.*`
+PAX records. Those builders apply the records when they unpack an image, so a
+base image can set a capability or an ACL that shows up in neither the file mode
+nor a plain `tar -tv` listing. Because kaniko pushes the layers of the base
+image unchanged, they carry through to the built image. With this flag kaniko
+reads each base image layer once and rewrites any layer that has such records:
 
-This changes images that rely on file capabilities. For example
-`quay.io/podman/stable` and `quay.io/buildah/stable` set `cap_setuid` on
-`newuidmap` and `cap_setgid` on `newgidmap`, and rootless podman fails in an
-image built `FROM` them unless this flag is set. Installing a package that
-ships a file capability in a `RUN` step is affected in the same way.
+- Layers without the records keep their digests. Rewritten layers get new
+  digests, so they no longer share a blob with the base image, and `--cache`
+  keys that depend on the base image digest change for a base that is rewritten.
+- Rewritten layers are compressed with `--compression-level`. A layer with an
+  uncompressed media type is written with the matching compressed type.
+- Foreign (non-distributable) layers are left alone. A stage built on an earlier
+  stage is not scanned again.
+- The rewritten layers are kept in a temporary directory under the kaniko
+  directory until the image is pushed, and removed afterwards.
+- A base layer that Go's `archive/tar` cannot parse makes the build fail up
+  front, including a build that would never have unpacked that layer.
+
+This changes images that rely on file capabilities. For example `ping` in
+`ubi8`, and `quay.io/podman/stable` and `quay.io/buildah/stable`, which set
+`cap_setuid` on `newuidmap` and `cap_setgid` on `newgidmap` (rootless podman
+fails in an image built `FROM` them), lose their capabilities with this flag.
+Installing a package that ships a file capability, or a `RUN setcap` step, is
+affected in the same way. Leave the flag off for such images.
 
 #### Flag `--push-ignore-immutable-tag-errors`
 
