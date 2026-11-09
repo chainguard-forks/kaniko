@@ -92,6 +92,17 @@ func newStageBuilder(args *dockerfile.BuildArgs, opts *config.KanikoOptions, sta
 		return nil, err
 	}
 
+	// Layers of the base image are pushed unchanged, so extended attributes in
+	// them (file capabilities, POSIX ACLs) survive into the built image unless
+	// --strip-xattrs removes them here. A stage built on an earlier stage reads
+	// its base from /kaniko/stages, which was already built without them.
+	if opts.StripXattrs && !stage.BaseImageStoredLocally {
+		sourceImage, err = util.StripImageXattrs(sourceImage, opts.CompressionLevel)
+		if err != nil {
+			return nil, errors.Wrap(err, "removing extended attributes from base image")
+		}
+	}
+
 	imageConfig, err := initializeConfig(sourceImage, opts)
 	if err != nil {
 		return nil, err
@@ -691,6 +702,13 @@ func CalculateDependencies(stages []config.KanikoStage, opts *config.KanikoOptio
 // DoBuild executes building the Dockerfile
 func DoBuild(opts *config.KanikoOptions) (v1.Image, error) {
 	t := timing.Start("Total Build Time")
+	// Set this before anything is extracted: fetchExtraStages unpacks the images
+	// of COPY --from=<image> before the first stage builder exists.
+	util.SetStripXattrs(opts.StripXattrs)
+	// Layers rewritten by an earlier run in a reused container are not needed.
+	if err := util.RemoveXattrStripFiles(); err != nil {
+		logrus.Warnf("Unable to remove the layers rewritten by an earlier run: %s", err)
+	}
 	digestToCacheKey := make(map[string]string)
 	stageIdxToDigest := make(map[string]string)
 
