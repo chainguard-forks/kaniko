@@ -27,7 +27,6 @@ import (
 	"testing"
 
 	"github.com/chainguard-dev/kaniko/pkg/config"
-	"github.com/docker/docker/pkg/system"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
@@ -311,7 +310,7 @@ func TestExtractFileXattrs(t *testing.T) {
 			if err := writeSecurityXattrToTarFile(path, hdr); err != nil {
 				t.Fatal(err)
 			}
-			got, err := system.Lgetxattr(path, securityCapabilityXattr)
+			got, err := lgetxattr(path, securityCapabilityXattr)
 			if strip {
 				if got != nil {
 					t.Fatalf("capability was written with --strip-xattrs: %q", got)
