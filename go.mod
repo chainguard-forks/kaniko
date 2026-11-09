@@ -36,7 +36,7 @@ require (
 	github.com/GoogleCloudPlatform/docker-credential-gcr/v2 v2.2.1
 	github.com/containerd/containerd v1.7.36
 	github.com/cyphar/filepath-securejoin v0.7.0
-	github.com/moby/go-archive v0.2.0
+	github.com/moby/go-archive v0.3.3
 	github.com/moby/moby/api v1.55.0
 	github.com/spf13/viper v1.21.0
 )
