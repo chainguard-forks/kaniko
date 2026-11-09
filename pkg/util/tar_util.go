@@ -29,8 +29,8 @@ import (
 	"syscall"
 
 	"github.com/chainguard-dev/kaniko/pkg/config"
-	"github.com/docker/docker/pkg/archive"
-	"github.com/docker/docker/pkg/system"
+	"github.com/moby/go-archive"
+	"github.com/moby/go-archive/compression"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -154,8 +154,8 @@ func writeSecurityXattrToTarFile(path string, hdr *tar.Header) error {
 		return nil
 	}
 	if capability, ok := hdr.Xattrs[securityCapabilityXattr]; ok {
-		err := system.Lsetxattr(path, securityCapabilityXattr, []byte(capability), 0)
-		if err != nil && !errors.Is(err, syscall.EOPNOTSUPP) && !errors.Is(err, system.ErrNotSupportedPlatform) {
+		err := lsetxattr(path, securityCapabilityXattr, []byte(capability), 0)
+		if err != nil && !errors.Is(err, syscall.EOPNOTSUPP) && !errors.Is(err, errNotSupportedPlatform) {
 			return errors.Wrapf(err, "failed to write %q attribute to %q", securityCapabilityXattr, path)
 		}
 	}
@@ -168,8 +168,8 @@ func readSecurityXattrToTarHeader(path string, hdr *tar.Header) error {
 	if hdr.Xattrs == nil {
 		hdr.Xattrs = make(map[string]string)
 	}
-	capability, err := system.Lgetxattr(path, securityCapabilityXattr)
-	if err != nil && !errors.Is(err, syscall.EOPNOTSUPP) && !errors.Is(err, system.ErrNotSupportedPlatform) {
+	capability, err := lgetxattr(path, securityCapabilityXattr)
+	if err != nil && !errors.Is(err, syscall.EOPNOTSUPP) && !errors.Is(err, errNotSupportedPlatform) {
 		return errors.Wrapf(err, "failed to read %q attribute from %q", securityCapabilityXattr, path)
 	}
 	if capability != nil {
@@ -234,14 +234,14 @@ func UnpackLocalTarArchive(path, dest string) ([]string, error) {
 			return nil, err
 		}
 		defer file.Close()
-		if compressionLevel == archive.Gzip {
+		if compressionLevel == compression.Gzip {
 			gzr, err := gzip.NewReader(file)
 			if err != nil {
 				return nil, err
 			}
 			defer gzr.Close()
 			return UnTar(gzr, dest)
-		} else if compressionLevel == archive.Bzip2 {
+		} else if compressionLevel == compression.Bzip2 {
 			bzr := bzip2.NewReader(file)
 			return UnTar(bzr, dest)
 		}
@@ -264,7 +264,7 @@ func IsFileLocalTarArchive(src string) bool {
 	return compressed || uncompressed
 }
 
-func fileIsCompressedTar(src string) (bool, archive.Compression) {
+func fileIsCompressedTar(src string) (bool, compression.Compression) {
 	r, err := os.Open(src)
 	if err != nil {
 		return false, -1
@@ -274,7 +274,7 @@ func fileIsCompressedTar(src string) (bool, archive.Compression) {
 	if err != nil {
 		return false, -1
 	}
-	compressionLevel := archive.DetectCompression(buf)
+	compressionLevel := compression.Detect(buf)
 	return (compressionLevel > 0), compressionLevel
 }
 
