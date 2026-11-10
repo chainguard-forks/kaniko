@@ -1,10 +1,23 @@
-FROM ubuntu:focal as base
-RUN apt update
-RUN apt install -y libbsd0
-RUN apt remove -y libbsd0
-RUN apt install -y libbsd0
+# Regression test for upstream #2066 (added in upstream #2096): a path that is
+# added in one layer, deleted in the next and added again in a later one must
+# still be there when a later stage starts FROM the image.
+#
+# Upstream got that layer sequence by installing, removing and reinstalling
+# libbsd0 with apt on ubuntu:focal. That made both the reference docker build
+# and the kaniko build depend on archive.ubuntu.com at test time, which is
+# unreachable from the CI runners often enough to fail unrelated pull requests,
+# and focal left standard support in 2025. The shell commands below produce the
+# same sequence (a regular file plus a symlink: added, whited out, added again)
+# without any network access.
+FROM busybox:latest AS base
+RUN mkdir -p /usr/lib/x86_64-linux-gnu \
+ && echo first > /usr/lib/x86_64-linux-gnu/libbsd.so.0.10.0 \
+ && ln -s libbsd.so.0.10.0 /usr/lib/x86_64-linux-gnu/libbsd.so.0
+RUN rm /usr/lib/x86_64-linux-gnu/libbsd.so.0 /usr/lib/x86_64-linux-gnu/libbsd.so.0.10.0
+RUN echo second > /usr/lib/x86_64-linux-gnu/libbsd.so.0.10.0 \
+ && ln -s libbsd.so.0.10.0 /usr/lib/x86_64-linux-gnu/libbsd.so.0
 RUN ls -al /usr/lib/x86_64-linux-gnu/libbsd.so.0
 
-FROM base as b
+FROM base AS b
 # Fails on main@28432d3c before #2066, the symlink is not existing here.
 RUN ls -al /usr/lib/x86_64-linux-gnu/libbsd.so.0
