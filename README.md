@@ -705,10 +705,10 @@ well-known Azure environmental information.
 
 To configure credentials, you will need to do the following:
 
-1. Update the `credStore` section of `config.json`:
+1. Update the `credsStore` section of `config.json`:
 
 ```json
-{ "credsStore": "acr" }
+{ "credsStore": "acr-env" }
 ```
 
 A downside of this approach is that ACR authentication will be used for all
