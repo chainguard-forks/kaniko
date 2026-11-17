@@ -130,7 +130,7 @@ func fakeAzureAD(t *testing.T) func() []tokenRequest {
 // image references through GetKeychain and checks which ones make the ACR
 // helper ask Azure AD for a token (GO-2026-6225). Lookalike hosts must not:
 // before the fix, any host containing ".azurecr.io" got an Azure Resource
-// Manager token. The rows for real ACR and MCR hosts check that the harness
+// Manager token. The rows for real ACR hosts check that the harness
 // does see token requests, so the lookalike rows can't pass just because the
 // helper was never reached.
 //
@@ -161,7 +161,9 @@ func TestGetKeychainRequestsAzureTokenOnlyForACRHosts(t *testing.T) {
 		{"requests token for ACR registry", "foo.azurecr.io/app", true},
 		{"requests token for ACR registry with port", "foo.azurecr.io:443/app", true},
 		{"requests token for ACR data endpoint", "foo.westeurope.data.azurecr.io/app", true},
-		{"requests token for MCR", "mcr.microsoft.com/dotnet/runtime", true},
+		// MCR is anonymous: asking Azure AD (or the metadata endpoint) for a
+		// token costs 2 to 30 s per image on runners outside Azure and gains nothing.
+		{"no token for MCR", "mcr.microsoft.com/dotnet/runtime", false},
 		{"no token for azurecr.io lookalike", "x.azurecr.io.attacker.example/app", false},
 		{"no token for azurecr.io lookalike with port", "x.azurecr.io.attacker.example:443/app", false},
 		{"no token for azurecr.us lookalike", "x.azurecr.us.attacker.example/app", false},

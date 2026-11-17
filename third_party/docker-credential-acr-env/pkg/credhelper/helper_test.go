@@ -23,7 +23,7 @@ import (
 	"github.com/docker/docker-credential-helpers/credentials"
 )
 
-// TestIsACRHelper tests whether URLs are detected as being ACR/MCR registry
+// TestIsACRHelper tests whether URLs are detected as being ACR registry
 // hosts, to determine whether the cred helper should fail fast.
 //
 // Rows marked "Chainguard" were added with the GO-2026-6225 patch.
@@ -36,7 +36,7 @@ func TestIsACRHelper(t *testing.T) {
 		{"myregistry.azurecr.cn", true},
 		{"myregistry.azurecr.de", true},
 		{"myregistry.azurecr.us", true},
-		{"mcr.microsoft.com", true},
+		{"mcr.microsoft.com", false},     // Chainguard: anonymous, never needs a token
 		{"myregistry.azurecr.me", false}, // not a known tld
 		{"notacr.xcr.example", false},
 		{"127.0.0.1:12345", false},
@@ -49,7 +49,7 @@ func TestIsACRHelper(t *testing.T) {
 		{"foo.azurecr.cn:5000", true},
 		{"foo.westeurope.data.azurecr.io", true}, // dedicated data endpoint
 		{"my-registry1.azurecr.io", true},
-		{"mcr.microsoft.com:443", true},
+		{"mcr.microsoft.com:443", false}, // Chainguard: see above
 
 		// Chainguard: GO-2026-6225 lookalikes.
 		{"evil.azurecr.io.attacker.com", false},

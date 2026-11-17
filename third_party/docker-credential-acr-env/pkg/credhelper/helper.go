@@ -39,10 +39,7 @@ var acrHostRE = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+
 // portRE matches the digits of an explicit port; the range is checked separately.
 var portRE = regexp.MustCompile(`^[0-9]{1,5}$`)
 
-const (
-	mcrHostname   = "mcr.microsoft.com"
-	tokenUsername = "<token>"
-)
+const tokenUsername = "<token>"
 
 type ACRCredHelper struct {
 }
@@ -59,7 +56,7 @@ func (a ACRCredHelper) Delete(_ string) error {
 	return errors.New("list is unimplemented")
 }
 
-// isACRRegistry reports whether input is a bare ACR or MCR registry host,
+// isACRRegistry reports whether input is a bare ACR registry host,
 // optionally with a port.
 //
 // Chainguard patch (GO-2026-6225). Rules:
@@ -71,8 +68,13 @@ func (a ACRCredHelper) Delete(_ string) error {
 //     like an ACR host.
 //   - an explicit port must be 1-65535 (an empty port, as in "host:", is
 //     rejected).
-//   - the hostname must be mcr.microsoft.com, or match acrHostRE: anchored,
-//     no trailing dot, no empty or malformed labels.
+//   - the hostname must match acrHostRE: anchored, no trailing dot, no empty
+//     or malformed labels.
+//   - mcr.microsoft.com is deliberately NOT treated as ACR. Upstream did
+//     match it, but MCR is anonymous, so no token is ever needed, and on a
+//     runner outside Azure the token request waits on the link-local metadata
+//     endpoint (169.254.169.254): at least 2 s, and 30 s if that address is
+//     black-holed, for every distinct MCR image pulled.
 //   - matching is case-sensitive, as it was upstream. Registry hosts are
 //     normally lower case; widening to mixed case would change what is
 //     forwarded to the token exchange, so it is deliberately not done here.
@@ -90,8 +92,7 @@ func isACRRegistry(input string) bool {
 			return false
 		}
 	}
-	host := serverURL.Hostname()
-	return host == mcrHostname || acrHostRE.MatchString(host)
+	return acrHostRE.MatchString(serverURL.Hostname())
 }
 
 func (a ACRCredHelper) Get(serverURL string) (string, string, error) {

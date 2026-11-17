@@ -37,9 +37,16 @@ licence (Apache-2.0) and upstream copyright headers are kept.
      `AZURESTACKCLOUD` environment and `AZURE_ENVIRONMENT_FILEPATH`. A
      replacement helper that doesn't get its Azure settings from go-autorest
      (for example one using azidentity) won't see the fake endpoint, and
-     that test's ACR and MCR rows will fail with "token requested = false"
+     that test's ACR rows will fail with "token requested = false"
      until it is adapted.
-2. Import paths rewritten from `github.com/chrismellard/docker-credential-acr-env/...`
+2. `mcr.microsoft.com` is no longer treated as an ACR host (OS-5358). Upstream
+   routed it into the helper, which on a runner outside Azure meant a request to
+   the link-local metadata endpoint for every distinct MCR image: at least 2 s,
+   and 30 s when that address is black-holed. MCR is anonymous and never needs
+   the token. Behaviour change: a runner that relied on the helper being asked
+   about MCR no longer is; the lookup now returns "credentials not found" and
+   kaniko pulls anonymously.
+3. Import paths rewritten from `github.com/chrismellard/docker-credential-acr-env/...`
    to `github.com/chainguard-dev/kaniko/third_party/docker-credential-acr-env/...`,
    and upstream's `go.mod` / `go.sum` removed. Dependencies (go-autorest,
    cobra, viper, docker-credential-helpers and so on) come from kaniko's own
