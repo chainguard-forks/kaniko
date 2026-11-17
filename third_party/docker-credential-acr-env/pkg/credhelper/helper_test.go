@@ -105,7 +105,7 @@ func TestIsACRHelper(t *testing.T) {
 		{"foo.AzureCR.io", false},
 		{"FOO.azurecr.io", false},
 
-		// Chainguard: MCR must match exactly, not as a suffix.
+		// Chainguard: MCR subdomains and lookalikes are not ACR hosts either.
 		{"foo.mcr.microsoft.com", false},
 		{"evilmcr.microsoft.com", false},
 
@@ -176,6 +176,7 @@ var getCases = []struct {
 }{
 	{"passes ACR registry to token request", "foo.azurecr.io", false},
 	{"rejects azurecr.io lookalike", "evil.azurecr.io.attacker.com", true},
+	{"rejects MCR", "mcr.microsoft.com", true}, // anonymous registry, never needs a token (OS-5358)
 	{"rejects MCR lookalike", "mcr.microsoft.com.attacker.com", true},
 	{"rejects trailing dot", "foo.azurecr.io.", true},
 	{"rejects userinfo", "foo.azurecr.io@attacker.com", true},
