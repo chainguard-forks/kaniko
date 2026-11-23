@@ -33,7 +33,7 @@ jobs:
       security-events: write # Upload SARIF results to Code Scanning
 
     steps:
-      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+      - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: block
           # zizmor-action >= v0.7 bootstraps zizmor from PyPI (`pip download`)
