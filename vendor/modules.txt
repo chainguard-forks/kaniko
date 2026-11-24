@@ -129,7 +129,7 @@ github.com/Azure/go-autorest/logger
 # github.com/Azure/go-autorest/tracing v0.6.1
 ## explicit; go 1.15
 github.com/Azure/go-autorest/tracing
-# github.com/GoogleCloudPlatform/docker-credential-gcr/v2 v2.2.1
+# github.com/GoogleCloudPlatform/docker-credential-gcr/v2 v2.2.2
 ## explicit; go 1.26.0
 github.com/GoogleCloudPlatform/docker-credential-gcr/v2
 github.com/GoogleCloudPlatform/docker-credential-gcr/v2/auth
@@ -438,7 +438,7 @@ github.com/dimchansky/utfbom
 # github.com/distribution/reference v0.6.0
 ## explicit; go 1.20
 github.com/distribution/reference
-# github.com/docker/cli v29.9.3+incompatible
+# github.com/docker/cli v29.10.0+incompatible
 ## explicit
 github.com/docker/cli/cli/config
 github.com/docker/cli/cli/config/configfile
