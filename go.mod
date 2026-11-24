@@ -33,7 +33,7 @@ require (
 
 require (
 	github.com/Azure/azure-sdk-for-go v68.0.0+incompatible
-	github.com/GoogleCloudPlatform/docker-credential-gcr/v2 v2.2.1
+	github.com/GoogleCloudPlatform/docker-credential-gcr/v2 v2.2.2
 	github.com/containerd/containerd v1.7.36
 	github.com/cyphar/filepath-securejoin v0.7.0
 	github.com/moby/go-archive v0.3.3
@@ -74,7 +74,7 @@ require (
 	github.com/aws/smithy-go v1.28.9 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dimchansky/utfbom v1.1.1 // indirect
-	github.com/docker/cli v29.9.3+incompatible // indirect
+	github.com/docker/cli v29.10.0+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.13
 	github.com/docker/go-connections v0.7.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
